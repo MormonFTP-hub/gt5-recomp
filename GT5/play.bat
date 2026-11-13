@@ -59,6 +59,12 @@ set "PS3_VIDEO_MODE=1080"
 REM Skip the opening movie: a quicker start, and on a busy or slower PC that movie could stop on one
 REM frame at the first start (#10). GT TV still plays it. Remove this line to watch it.
 set "PS3_SKIP_INTRO=1"
+REM Downloadable content (DLC). The game's Downloadable Content screen needs PSN sign-in: the port
+REM reports signed in with a local profile and connects to nothing (PSN for GT5 is long gone).
+REM DLC vouchers in hdd0\game\<title>\USRDIR\vou are read the way the PS3 kernel serves them
+REM (encrypted for a plain open, decrypted for the licensed open); GT5 checks both. See README, DLC.
+set "PS3_NP_SIGNED_IN=1"
+set "PS3_EDAT_STRICT=1"
 REM The launcher (GT5Launcher.exe in the install folder) saves its settings in settings.bat; they win
 REM over the lines above. Without the launcher there's no settings.bat and the lines above count.
 if exist "%HERE%settings.bat" call "%HERE%settings.bat"

@@ -252,7 +252,7 @@ especially: the port was tuned on one desktop with an NVIDIA card.
 | Ultrawide (21:9, 32:9)? | ✅ New: a wider view, with the HUD kept 16:9 in the middle |
 | Which controllers? | ✅ DualSense, DualShock 4, Xbox pads, keyboard |
 | US copy (BCUS98114)? | ✅ Yes, players have raced on it |
-| Version 1.02, or a game update (2.xx)? | 🧪 New: game updates run: 2.17 (the last) tested on the US release, 2.01 on the Asian one ([how to set one up](#game-updates)); 1.02 and 2.11 untried |
+| Version 1.02, a game update (2.xx), DLC? | 🧪 New: update 2.17 (the last) and all DLC run, tested on the US release; 2.01 too ([how to set them up](#game-updates)); 1.02 and 2.11 untried |
 | Settings without editing files? | ✅ New: the [launcher](#launcher) |
 | Full screen? | ✅ New: borderless full screen in the launcher (Alt+Enter is switched off since v0.1.17: it used to freeze the picture) |
 | Higher than 1080p (4K)? | ⚠️ The game's top mode is its 1080p one (races drawn at 1728x972), scaled up to your window; drawing above that isn't there yet |
@@ -353,12 +353,12 @@ and the tools find the few spots that could differ between releases in your own 
 **Q: My copy says version 1.02, or I have a game update (2.xx). Does that work? What about the Master Mod?**
 
 **A: Game updates work now, as far as they've been tried.** 2.17, the last update, runs on the US
-release: menus, GT Mode and a full 16-car Arcade race at 60 fps. The Asian release's 2.01 boots,
-loads a career save and races. An update needs two things from your PS3 (or RPCS3): its executable
-and its data, see [Game updates](#game-updates). 2.11 (the one the GT5 Master Mod needs) and other
-regions' 2.17 haven't been tried yet: each update can change the game's SPU programs again, so please
-report what setup prints (`version_addrs.py`'s lines and `SPU jobs found in EBOOT.elf: N of 15`; US
-2.17 shows 13 of 15 plus 3 of its own, and that is complete).
+release: menus, GT Mode, a full 16-car race at 60 fps, and all its DLC (see
+[Game updates and DLC](#game-updates): `setup.ps1` installs them from your `.pkg` and `.rap` files).
+The Asian release's 2.01 boots, loads a career save and races. 2.11 (the one the GT5 Master Mod needs)
+and other regions' 2.17 haven't been tried yet: each update can change the game's SPU programs
+again, so please report what setup prints (`version_addrs.py`'s lines and `SPU jobs found in
+EBOOT.elf: N of 15`; US 2.17 shows 13 of 15 plus 3 of its own, and that is complete).
 Another disc version, like 1.02, hasn't been tried either; the same lines tell us how
 close it is. The Master Mod itself (its changed game files) hasn't been tried.
 
@@ -603,7 +603,7 @@ update's data (see [Game updates](#game-updates)).
 | North America | **BCUS98114** | works (run by players) | decrypted `EBOOT.elf` `40126D2D14B0A95B9601BB11E3A6E778186067AC` |
 | Hong Kong / Asia | **BCAS20108** | tested (and run by a player) | decrypted `EBOOT.elf` `49A3662D4B541BB4E0C2E72D2602F89FEB710E71` |
 | Hong Kong / Asia, update 2.01 | **BCAS20108** | tested: menus, career save, Arcade race | decrypted update `EBOOT.elf` `96DEA35B194AA80E993CAD9EBE42E96072F3A3D5` |
-| North America, update 2.17 | **BCUS98114** | tested: menus, GT Mode, 16-car Arcade race | decrypted update `EBOOT.elf` `12EF249F9B95591E08251AC85F103B1451DA23BF` |
+| North America, update 2.17 | **BCUS98114** | tested: menus, GT Mode, 16-car Arcade race, all DLC | decrypted update `EBOOT.elf` `12EF249F9B95591E08251AC85F103B1451DA23BF` |
 
 Almost everything in the port works for any release, because the recompiled code is generated from
 your own executable. Only three things are tied to where the code sits in one executable: the end of
@@ -619,24 +619,43 @@ Check a file's hash with `Get-FileHash <file> -Algorithm SHA1` in PowerShell.
 
 <a id="game-updates"></a>
 
-### Game updates (2.xx)
+### Game updates (2.xx) and DLC
 
-A game update brings a new executable and data the game reads from the PS3's hard disk (for 2.01,
-about 2.2 GB of files in `PDIPFS`). The port needs both:
+A game update brings a new executable and data the game reads from the PS3's hard disk (2.17, the
+last one, about 4 GB in `PDIPFS` across 30 packages). GT5's DLC is small: each car or pack is a
+"voucher" file the game unlocks it from, while the cars and tracks themselves come with the updates.
+Tested: the US release (BCUS98114) with update **2.17** and all of its DLC (Racing Car Pack, Car
+Packs 2 and 3, Course Pack, Speed Test, Twin Ring Motegi, the 2012 car packs and the gift cars).
 
-1. **Get the update's files**: install the update in [RPCS3](https://rpcs3.net) (*File > Install
-   Packages/Raps/Edats* with the update's `.pkg`), or copy the game's folder from your PS3's hard disk.
-   Either way they're in `dev_hdd0\game\<title ID>\USRDIR` (for example `dev_hdd0\game\BCES00569\USRDIR`).
-2. **The executable**: decrypt that folder's `EBOOT.BIN` (RPCS3, *Utilities > Decrypt PS3 Binaries*) and
-   save the result as `GT5\input\EBOOT.elf`. The disc's `PS3_GAME` stays as it is in `GT5\vfs`.
-3. **The data**: copy everything else in that `USRDIR` folder (`PDIPFS` and the rest, not `EBOOT.BIN`)
-   to `GT5\hdd0\game\<title ID>\USRDIR`, keeping the folder names. Without it the game starts, but
-   Arcade Mode has no courses to choose.
+**From your PlayStation Store packages** (the `.pkg` files, and a `.rap` licence per DLC):
+
+1. Put them in `GT5\content` (setup.ps1 makes the folder; any layout inside is fine). All updates
+   for your release go in, 1.01 to the newest: each brings only what it changes.
+2. Run `setup.ps1`. It installs them into `GT5\hdd0` (`scripts\install_content.py`, run again
+   whenever you add something; what's installed is skipped), checks every DLC against its licence,
+   and copies the newest update's executable to `GT5\input\EBOOT_<version>.BIN`.
+3. **The executable**: decrypt that `EBOOT_<version>.BIN` with RPCS3 (*Utilities > Decrypt PS3
+   Binaries*) and save the result as `GT5\input\EBOOT.elf`. The disc's `PS3_GAME` stays as it is in
+   `GT5\vfs`.
 4. Run `setup.ps1` again: it lifts and builds the new executable (about an hour).
 
+**DLC in the game**: the car vouchers arrive by themselves at the first start ("The following Gift
+Cars have been added to your garage"); the packs are in **Downloadable Content** on the main menu,
+under Purchased Content, each with *Install*. GT5 wants a PSN sign-in for that screen:
+`play.bat` tells it it's signed in (`PS3_NP_SIGNED_IN`), with no connection to anything.
+
+**Only DLC you bought unlocks.** Each voucher opens only with the licence (`.rap`) of that purchase,
+and the port answers GT5's PSN purchase check with "not owned", as for an account without purchases.
+Without the DLC files or without the licences, the game shows no purchased content and no gift cars.
+
+**From a PS3 or RPCS3 that has them installed** instead: copy `dev_hdd0\game\<title ID>` (everything
+but `USRDIR\EBOOT.BIN`) to `GT5\hdd0\game\<title ID>` and the licences (`dev_hdd0\home\<user>\exdata\*.rap`)
+to `GT5\content`, then run `setup.ps1`. Without the update's data the game starts, but Arcade Mode has
+no courses to choose.
+
 If your disc folder's `PS3_GAME\PARAM.SFO` already says version 02.xx, it holds the update's
-executable, but usually not its data: step 3 is still needed. `GT5-Installer.bat` doesn't do these
-steps yet.
+executable, but usually not its data: install the update packages as above. `GT5-Installer.bat`
+doesn't do these steps yet.
 
 <a id="setup"></a>
 

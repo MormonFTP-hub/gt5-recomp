@@ -50,8 +50,11 @@ performance matters more than the graphics card.
 - Game updates (2.xx), new: the Asian release's update 2.01 boots, loads a long-played career save and
   races in Arcade Mode. It needs the update's data as well as its executable (README, Game updates).
   Frame rates on it aren't measured yet
-- Update 2.17 (the last), new: the US release's 2.17 runs menus, GT Mode and a full 16-car Arcade
-  race at 60 fps (README, Game updates)
+- Update 2.17 (the last) and DLC, new: the US release's 2.17 runs menus, GT Mode and a full 16-car
+  Arcade race at 60 fps, with all its DLC: the gift cars arrive in the garage, and the Racing Car
+  Pack, Car Packs 2 and 3, the 2012 car packs, Course Pack, Speed Test and Twin Ring Motegi install
+  from Downloadable Content. `setup.ps1` installs updates and DLC from your `.pkg` and `.rap` files
+  (README, Game updates and DLC)
 - One-click install: `GT5-Installer.bat` (README, Install)
 - Ultrawide monitors (21:9, 32:9), new: the game draws a wider view itself and keeps the HUD and
   menus 16:9 in the middle (checked in 2560×1080, 3440×1440 and 3840×1080 windows, not yet on a real

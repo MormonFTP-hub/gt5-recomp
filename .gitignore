@@ -4,6 +4,7 @@ GT5/input/
 GT5/vfs/
 GT5/gamedata/
 GT5/dev_flash/
+GT5/content/
 *.elf
 *.ELF
 *.self

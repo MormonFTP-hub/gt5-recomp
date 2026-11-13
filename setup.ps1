@@ -140,7 +140,7 @@ if (-not (Test-Path $elf)) {
     } elseif ($sha1 -eq "96DEA35B194AA80E993CAD9EBE42E96072F3A3D5") {
         Ok "GT5\input\EBOOT.elf: Hong Kong / Asia BCAS20108, update 2.01 (tested; needs the update's data in GT5\hdd0, README: Game updates)"
     } elseif ($sha1 -eq "12EF249F9B95591E08251AC85F103B1451DA23BF") {
-        Ok "GT5\input\EBOOT.elf: North America BCUS98114, update 2.17 (tested; needs the update's data in GT5\hdd0, README: Game updates)"
+        Ok "GT5\input\EBOOT.elf: North America BCUS98114, update 2.17 (tested; needs the update's data in GT5\hdd0, README: Game updates and DLC)"
     } else {
         Ok "GT5\input\EBOOT.elf (SHA-1 $sha1)"
         Write-Host "            Not one tried yet. Another disc version may well work: please report how it goes. One from a game update (2.xx) also needs the update's data in GT5\hdd0 (README: Game updates)." -ForegroundColor Yellow
@@ -171,6 +171,19 @@ $flash = Join-Path $gt5 "dev_flash"
 if (Test-Path (Join-Path $flash "sys")) { Ok "GT5\dev_flash (PS3 system software)" }
 elseif (Test-Path (Join-Path $flash "dev_flash\sys")) { Todo "GT5\dev_flash at the right level" "It's one folder too deep: move the contents of GT5\dev_flash\dev_flash up into GT5\dev_flash." }
 else { Todo "GT5\dev_flash (PS3 system software)" "In RPCS3, File > Install Firmware with Sony's PS3UPDAT.PUP, then copy RPCS3's dev_flash folder to GT5\dev_flash (it contains sys, vsh, data...)." }
+
+# ---- Game updates and DLC (optional): your .pkg and .rap files in GT5\content --------------------------
+$content = Join-Path $gt5 "content"
+New-Item -ItemType Directory -Force $content | Out-Null
+$have = Get-ChildItem -LiteralPath $content -Recurse -File -ErrorAction SilentlyContinue |
+        Where-Object { $_.Extension -in ".pkg", ".rap" } | Select-Object -First 1
+if ($have -and (Test-Path (Join-Path $game "PARAM.SFO"))) {
+    Write-Host ""
+    Write-Host "Game updates and DLC (from GT5\content):"
+    & $py (Join-Path $gt5 "scripts\install_content.py") | ForEach-Object { Write-Host "            $_" }
+    if ($LASTEXITCODE -eq 0) { Ok "game updates and DLC installed in GT5\hdd0" }
+    else { Todo "game updates and DLC" "install_content.py reported a problem (see above)." }
+}
 
 Write-Host ""
 if ($script:todo -gt 0) {

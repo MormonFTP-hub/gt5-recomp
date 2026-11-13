@@ -9,6 +9,24 @@ release on the tested rig in [STATUS.md](STATUS.md) unless a day says otherwise.
 
 ## 13 Nov 2026
 
+🎁 **All DLC works, offline, from your own purchase files** (US release, update 2.17)
+- **DLC**: the car vouchers arrive in the garage at the first start, and the packs (Racing Car
+  Pack, Car Packs 2 and 3, the 2012 car packs, Course Pack, Speed Test, Twin Ring Motegi) are in
+  Downloadable Content > Purchased Content. What the game needed:
+  - A PSN sign-in for that screen: the port now says it's signed in, with a local profile and no
+    connection to anything (`PS3_NP_SIGNED_IN`, on in `play.bat`).
+  - An answer to the PSN check of what you bought: "not owned", as for an account without
+    purchases. The game then takes its DLC from the vouchers alone, and a voucher only opens with
+    the licence of your purchase. Tested both ways: without the licences, or without the DLC
+    files, nothing unlocks.
+  - DLC files read the way the PS3 serves them: as stored for a plain open, decrypted for the
+    licensed one. GT5 checks each voucher's header first and threw them all away when it saw the
+    decrypted contents there (`PS3_EDAT_STRICT`, on in `play.bat`).
+- **Installing updates and DLC**: put the `.pkg` files and your `.rap` licences in `GT5\content`
+  and run `setup.ps1` (`scripts\install_content.py`). It installs the updates in order and the DLC,
+  checks each DLC against its licence, and leaves the newest update's executable in `GT5\input`
+  to decrypt with RPCS3. See README, [Game updates and DLC](README.md#game-updates).
+
 🏁 **Update 2.17 runs** (tested on the US release, BCUS98114)
 - 2.17, the last update, gets through menus, GT Mode and a full 16-car Arcade race at 60 fps. It
   was built with a newer compiler than the disc, and the lift didn't know two of its patterns:
