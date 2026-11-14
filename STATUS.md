@@ -95,7 +95,8 @@ performance matters more than the graphics card.
   Lifted SPU code keeps its registers in CPU registers since 13 Nov, and GT5's SPURS jobs take 20% less
   CPU. Since v0.1.41 the graphics threads sleep instead of spinning on CPUs with 8 threads or fewer:
   on 4 cores that's 20% less CPU at the same frame rate, and +25% frames when the CPU is shared with
-  other programs. A player's
+  other programs. On 4 small cores the sound mixer, one thread GT5 can't split, ran flat out and short
+  of real time; since v0.1.43 it takes 22% less time (all SPU jobs 14% less CPU). A player's
   Ryzen 5 3600 showed that drawing fewer frames doesn't help there: the launcher's 30 fps setting
   halved the frames drawn and left the game's speed unchanged, so it's no longer picked by itself.
   Laptops now draw on their dedicated graphics card (v0.1.20).
@@ -125,6 +126,8 @@ performance matters more than the graphics card.
 
 The last few days; the full history since 1 November is in [CHANGELOG.md](CHANGELOG.md).
 
+- **14 Nov 2026:** SPU code leaner: the sound mixer 22% faster, all SPU jobs 14% less CPU (one re-lift)
+  (v0.1.43).
 - **13 Nov 2026:** Linux and the Steam Deck much quicker (menus ~17 → ~25-27 fps, race frames ~180 →
   ~110 ms on a Deck) and the PS3's vector multiply-add four lanes at once on every PC, from a community
   pull request ([#30](https://github.com/MormonFTP-hub/gt5-recomp/pull/30)); a steering wheel that stops

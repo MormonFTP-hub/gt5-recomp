@@ -7,6 +7,31 @@ release on the tested rig in [STATUS.md](STATUS.md) unless a day says otherwise.
 > or repeated frames (fixed on 4 Nov and 9 Nov), so treat them as rough before-and-after comparisons.
 > From 9 Nov on, numbers are the game's own frames.
 
+## 14 Nov 2026
+
+🏷️ Released as **v0.1.43**
+
+🎵 **Leaner SPU code: GT5's sound mixer 22% faster, all SPU jobs 14% less CPU** (one re-lift, done by
+`update.ps1`)
+- The sound mixer is one SPU job run on one host thread 187.5 times a second (once per 256-sample block
+  of 48 kHz audio), and nothing else can share that work out. On a stand-in for a 4-core laptop (the
+  tested rig's i9 limited to 4 of its efficient cores) it was the one thread running flat out: about a
+  full core, and short of real time.
+- Its hottest loops filter the sound sample by sample. In the lifted code, a loop that starts where its
+  function starts wrote every SPU register it changed back to memory and read it again on every pass.
+  Such a loop now keeps them in CPU registers from one pass to the next, as other loops already did.
+- The SPU stores a single number by building a mask for its position and shuffling it into the 16
+  bytes it writes back. Where that mask was just built, the shuffle is now a direct insert.
+- Measured with the per-job SPU timer, alternating the old and new builds three times on all cores:
+  the mixer from 1.99 to **1.56 ms** per block (−22%), all SPU jobs from 40.0 to **34.4 s** of CPU per
+  minute (−14%). On the 4 efficient cores, with another game running at the same time: the mixer from
+  3.9-4.2 to 3.1 ms per block.
+- Checked by lifting every SPU job both ways and running both from every entry point on random states:
+  the same registers, local store and channel traffic in about 15,000 runs (15 job images and the 4
+  busiest Wws job images). A race looks and sounds as before.
+- The lifter's `--no-loop-head-loads` and `--no-insert-peephole` give the old output, for comparison.
+- Needs one re-lift (the SPU lifter changed); `update.ps1` does it.
+
 ## 13 Nov 2026
 
 🏷️ Released as **v0.1.42**

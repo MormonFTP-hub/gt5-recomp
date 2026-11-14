@@ -18651,7 +18651,45 @@ diff --git a/runtime/spu/spu_helpers.h b/runtime/spu/spu_helpers.h
  #if defined(__ARM_NEON) && !defined(SPU_SCALAR_HELPERS) && !defined(SPU_SCALAR_INT)
  static inline u128 spu_cwd(u128 a, int i7) {
      static const uint32_t base[4] = {0x10111213u, 0x14151617u, 0x18191A1Bu, 0x1C1D1E1Fu}, lane[4] = {0, 1, 2, 3};
-@@ -1844,10 +1999,20 @@
+@@ -1805,6 +1960,37 @@
+ static inline u128 spu_cwd(u128 a, int i7) { return spu_cwd_ref(a, i7); }
+ #endif
+ static inline u128 spu_cdd(u128 a, int i7){ return spu_cdd_pos((int)a._u32[0]+i7); }
++/* What shufb(a, b, c) gives when c came from cbd/chd/cwd/cdd (or the x forms) at address pos: b with
++ * one byte / halfword / word / doubleword replaced by a's preferred one, the lane chosen as in the
++ * generators above. The lifter emits these for such a shufb in the same block (spu_lifter.py, its
++ * insert peephole), keeping the generator's address in a local: one compare and blend, where shufb
++ * re-derived the lane from the control bytes. Storing a scalar is cwd + lqd + shufb + stqd on the SPU. */
++#if SPU_X86
++static inline u128 spu_insb(u128 b, u128 a, uint32_t pos) {
++    const __m128i m = _mm_cmpeq_epi8(_mm_setr_epi8(0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15),
++                                     _mm_set1_epi8((char)((pos & 0xF) ^ 3)));
++    return spu__xs(_mm_blendv_epi8(spu__xl(b), _mm_shuffle_epi8(spu__xl(a), _mm_setzero_si128()), m));
++}
++static inline u128 spu_insh(u128 b, u128 a, uint32_t pos) {
++    const __m128i m = _mm_cmpeq_epi16(_mm_setr_epi16(0, 1, 2, 3, 4, 5, 6, 7), _mm_set1_epi16((short)(((pos & 0xF) >> 1) ^ 1)));
++    return spu__xs(_mm_blendv_epi8(spu__xl(b), _mm_shuffle_epi8(spu__xl(a), _mm_set1_epi16(0x0100)), m));
++}
++static inline u128 spu_insw(u128 b, u128 a, uint32_t pos) {
++    const __m128i m = _mm_cmpeq_epi32(_mm_setr_epi32(0, 1, 2, 3), _mm_set1_epi32((int)((pos >> 2) & 3)));
++    return spu__xs(_mm_blendv_epi8(spu__xl(b), _mm_shuffle_epi32(spu__xl(a), 0), m));
++}
++static inline u128 spu_insd(u128 b, u128 a, uint32_t pos) {
++    const __m128i m = _mm_cmpeq_epi64(_mm_set_epi64x(1, 0), _mm_set1_epi64x((long long)((pos >> 3) & 1)));
++    return spu__xs(_mm_blendv_epi8(spu__xl(b), _mm_unpacklo_epi64(spu__xl(a), spu__xl(a)), m));
++}
++#else
++static inline u128 spu_insb(u128 b, u128 a, uint32_t pos) { b._u8[(pos & 0xF) ^ 3] = a._u8[0]; return b; }
++static inline u128 spu_insh(u128 b, u128 a, uint32_t pos) { b._u16[((pos & 0xF) >> 1) ^ 1] = a._u16[0]; return b; }
++static inline u128 spu_insw(u128 b, u128 a, uint32_t pos) { b._u32[(pos >> 2) & 3] = a._u32[0]; return b; }
++static inline u128 spu_insd(u128 b, u128 a, uint32_t pos) {
++    const unsigned d = (pos >> 3) & 1; b._u32[2 * d] = a._u32[0]; b._u32[2 * d + 1] = a._u32[1]; return b;
++}
++#endif
+ static inline u128 spu_cbx(u128 a, u128 b){ return spu_cbd_pos((int)(a._u32[0]+b._u32[0])); }
+ static inline u128 spu_chx(u128 a, u128 b){ return spu_chd_pos((int)(a._u32[0]+b._u32[0])); }
+ static inline u128 spu_cwx(u128 a, u128 b){ return spu_cwd_pos((int)(a._u32[0]+b._u32[0])); }
+@@ -1844,10 +2030,20 @@
  #else
  static inline u128 spu_rotqmbybi(u128 a, u128 b) { return spu_rotqmbybi_ref(a, b); }
  #endif
@@ -22948,13 +22986,72 @@ diff --git a/runtime/ppu/ppu_vmx.h b/runtime/ppu/ppu_vmx.h
 diff --git a/tools/spu_lifter.py b/tools/spu_lifter.py
 --- a/tools/spu_lifter.py
 +++ b/tools/spu_lifter.py
-@@ -494,6 +494,139 @@
+@@ -494,6 +494,206 @@
  
  
  
 +_GPR_RE = re.compile(r"ctx->gpr\[(\d+)\]")
 +_GPR_SET_RE = re.compile(r"ctx->gpr\[(\d+)\]\s*=(?!=)")
 +_MARK_RE = re.compile(r"@(WB|SY|RL)@ ?|(goto loc_[0-9A-F]{8};)")
++
++
++_CW_RE = re.compile(r"^(\s*)ctx->gpr\[(\d+)\] = spu_c([bhwd])(d|x)\(ctx->gpr\[(\d+)\], (?:ctx->gpr\[(\d+)\]|([^()]+))\);$")
++_SHUFB_RE = re.compile(r"^(\s*)ctx->gpr\[(\d+)\] = spu_shufb\(ctx->gpr\[(\d+)\], ctx->gpr\[(\d+)\], ctx->gpr\[(\d+)\]\);$")
++_CTX_CALL_RE = re.compile(r"\b(\w+)\(ctx[,)]")
++_PURE_CTX_CALLS = {"spu_ls_lq", "spu_ls_sq", "spu_ls_read128", "spu_ls_write128"}
++
++
++def _insert_peephole(lines):
++    """shufb with an insertion control made in the same block (SPULifter.insert_peephole).
++
++    The SPU stores a scalar as cwd/chd/cbd/cdd (or the x forms) for the address, lqd of the quadword,
++    shufb to put the value in, stqd. Lifted as is, the shufb re-derives the lane from the control's
++    bytes. Here each generator line also keeps its address in a local (_iaN), and a shufb in the
++    same basic block whose control register still holds that generator's result becomes
++    spu_insb/h/w/d(b, a, address): b with a's preferred element in that lane, which is what the
++    shufb computes. The generator itself stays (its register may be read later or stored back). A
++    control is forgotten at a label, when its register is written, and at any call that gets ctx
++    (a call or a channel op may change registers)."""
++    pat = {}
++    out, names = [], []
++    for ln in lines:
++        if ln.startswith("loc_") and ln.endswith(":"):
++            pat.clear()
++            out.append(ln)
++            continue
++        m = _CW_RE.match(ln)
++        if m:
++            ind, t, kind, form, a, b, imm = m.groups()
++            name = "_ia%d" % len(names)
++            names.append(name)
++            if form == "x" and b is not None:
++                expr = f"ctx->gpr[{a}]._u32[0] + ctx->gpr[{b}]._u32[0]"
++            elif form == "d" and imm is not None:
++                expr = f"ctx->gpr[{a}]._u32[0] + (uint32_t)({imm})"
++            else:
++                pat.clear()
++                out.append(ln)
++                continue
++            pat.pop(int(t), None)
++            out.append(f"{ind}{name} = {expr}; {ln.strip()}")
++            pat[int(t)] = (kind, name)
++            continue
++        m = _SHUFB_RE.match(ln)
++        if m and int(m.group(5)) in pat:
++            ind, t, ra, rb, rc = m.groups()
++            kind, name = pat[int(rc)]
++            ln = f"{ind}ctx->gpr[{t}] = spu_ins{kind}(ctx->gpr[{rb}], ctx->gpr[{ra}], {name});"
++        if "@RL@" in ln or "@SY@" in ln or any(f not in _PURE_CTX_CALLS for f in _CTX_CALL_RE.findall(ln)):
++            pat.clear()
++        for w in _GPR_SET_RE.findall(ln):
++            pat.pop(int(w), None)
++        out.append(ln)
++    if names:
++        out.insert(0, "    uint32_t " + ", ".join(names) + ";")
++    return out
++
++
++LOOP_HEAD_LOADS = True   # --no-loop-head-loads: a loop head holds only what every way in holds
 +
 +
 +def _localize(lines):
@@ -23024,13 +23121,21 @@ diff --git a/tools/spu_lifter.py b/tools/spu_lifter.py
 +                ins = [a for (_, a, _) in fwd.get(name, [])]
 +                if falls:
 +                    ins.append(avail)
-+                av = set.intersection(*ins) if ins else set()
-+                if name in loop_regs:
-+                    av &= loop_regs[name]
++                if name in loop_regs and LOOP_HEAD_LOADS:
++                    # A loop head holds every register its loop uses, and each way in loads the
++                    # ones it does not hold (a register not in a local is current in the context).
++                    # With only those held on every way in, a loop whose head is the function's
++                    # first line (entered with nothing in locals) held none: each pass stored the
++                    # registers it changed and reloaded them at the head.
++                    av = set(loop_regs[name])
++                else:
++                    av = set.intersection(*ins) if ins else set()
++                    if name in loop_regs:
++                        av &= loop_regs[name]
 +                for key, a, d in fwd.get(name, []):
-+                    edge_code[key] = store(d - av)
-+                if falls and dirty - av:
-+                    out.append("    " + store(dirty - av).rstrip())
++                    edge_code[key] = store(d - av) + load(av - a)
++                if falls and (dirty - av or av - avail):
++                    out.append("    " + (store(dirty - av) + load(av - avail)).rstrip())
 +                avail, dirty = set(av), av & written
 +                label_in[name] = frozenset(av)
 +            out.append(ln)
@@ -23088,7 +23193,7 @@ diff --git a/tools/spu_lifter.py b/tools/spu_lifter.py
  # lv2 stop-and-signal syscalls that resume at the next instruction (the same
  # set as find_spu_functions.LV2_RESUMING_STOPS, which decides function extents).
  LV2_RESUMING_STOPS = {0x100, 0x110, 0x111}
-@@ -529,6 +662,16 @@
+@@ -529,6 +729,19 @@
          # compute_link_returns(). Emitted as `return;` so they compose with the
          # brsl->C-call nesting instead of branching to an unregistered PC.
          self.link_return: set = set()
@@ -23102,10 +23207,13 @@ diff --git a/tools/spu_lifter.py b/tools/spu_lifter.py
 +        # instruction was a load and a store, and each local-store write forced
 +        # ctx->ls and every register read after it to be loaded again.
 +        self.reg_locals = False
++        # shufb with a cbd/chd/cwd/cdd control from the same block -> a lane insert (_insert_peephole);
++        # off from the command line with --no-insert-peephole.
++        self.insert_peephole = False
  
      # ------------------------------------------------------------------ #
      def lift_function(self, insns: list[SPUInstruction],
-@@ -550,6 +693,7 @@
+@@ -550,6 +763,7 @@
          # for its interrupt handler (DMA-list stall-and-notify) never wakes. So
          # each merged chunk entry hands back to the drain when one is pending.
          merged_starts = {a for a in getattr(self, "func_starts", ()) if start < a < end}
@@ -23113,7 +23221,7 @@ diff --git a/tools/spu_lifter.py b/tools/spu_lifter.py
          last_insn = None
          for insn in insns:
              if insn.addr < start or insn.addr >= end:
-@@ -559,7 +703,7 @@
+@@ -559,7 +773,7 @@
              if insn.addr in merged_starts:
                  func.body_lines.append(
                      f"    if (ctx->int_enable && (ctx->event_status & ctx->event_mask)) "
@@ -23122,7 +23230,7 @@ diff --git a/tools/spu_lifter.py b/tools/spu_lifter.py
                      f"{self.prefix}spu_func_{insn.addr:08X}; return; }}")
              c = self._translate(insn, func)
              if c:
-@@ -583,7 +727,7 @@
+@@ -583,7 +797,7 @@
                           and (last_insn.raw & 0x3FFF) in LV2_RESUMING_STOPS))
                  and end in getattr(self, "func_starts", set())):
              func.body_lines.append(
@@ -23131,16 +23239,18 @@ diff --git a/tools/spu_lifter.py b/tools/spu_lifter.py
  
          # Infinite no-op self-loop (the SPU `br .` halt idiom): a function whose
          # whole body is nops + an unconditional branch back into itself does
-@@ -603,6 +747,8 @@
+@@ -603,6 +817,10 @@
                      "    spu_halt(ctx); return;",
                  ]
  
++        if self.insert_peephole:
++            func.body_lines = _insert_peephole(func.body_lines)
 +        if self.reg_locals:
 +            func.body_lines = _localize(func.body_lines)
          self.functions.append(func)
          return func
  
-@@ -648,6 +794,15 @@
+@@ -648,6 +866,15 @@
          def ra(): return _reg(ops[1])
          def rb(): return _reg(ops[2])
          def g(i): return f"ctx->gpr[{i}]"
@@ -23156,7 +23266,7 @@ diff --git a/tools/spu_lifter.py b/tools/spu_lifter.py
  
          # ---- nop / sync / stop ----
          if mn in ("nop", "lnop"):
-@@ -670,10 +825,10 @@
+@@ -670,10 +897,10 @@
                  # lv2 services these and resumes at the next instruction (the
                  # reply is read from the inbound mailbox right after the stop).
                  # spu_stop puts the context back to RUNNING when it serviced it.
@@ -23170,7 +23280,7 @@ diff --git a/tools/spu_lifter.py b/tools/spu_lifter.py
                      f"ctx->status = SPU_STATUS_STOPPED_BY_STOP; spu_stop(ctx); return;")
  
          # ---- immediate loaders ----
-@@ -714,14 +869,14 @@
+@@ -714,14 +941,14 @@
                  cond = f"(int32_t){pw(ra())} > (int32_t){pw(rb())}"
              else:  # hlgt
                  cond = f"{pw(ra())} > {pw(rb())}"
@@ -23187,7 +23297,7 @@ diff --git a/tools/spu_lifter.py b/tools/spu_lifter.py
                      "ctx->status = SPU_STATUS_STOPPED_BY_STOP; spu_stop(ctx); return;")
  
          # ---- integer arithmetic (register) ----
-@@ -857,33 +1012,42 @@
+@@ -857,33 +1084,42 @@
              return f"{g(rt())} = spu_{mn}({g(ra())}, {g(rb())}, {g(rt())});"
  
          # ---- quadword loads / stores ----
@@ -23239,7 +23349,7 @@ diff --git a/tools/spu_lifter.py b/tools/spu_lifter.py
  
          # ---- branches ----
          if mn in ("br", "bra"):
-@@ -893,7 +1057,7 @@
+@@ -893,7 +1129,7 @@
              # `goto loc_self` busy-spins the host thread forever; stop the SPU
              # instead (same halt path the lifter emits for a `stop` instruction).
              if tgt == addr:
@@ -23248,7 +23358,7 @@ diff --git a/tools/spu_lifter.py b/tools/spu_lifter.py
              return self._uncond_branch(tgt, func)
          if mn in ("brsl", "brasl"):
              # The disassembler drops the link register from brsl operands, so
-@@ -910,7 +1074,7 @@
+@@ -910,7 +1146,7 @@
              # boot in cri_audio_00023C58). Set the link, then stop the SPU (same
              # halt path the lifter emits for a `stop` instruction).
              if tgt == addr:
@@ -23257,7 +23367,7 @@ diff --git a/tools/spu_lifter.py b/tools/spu_lifter.py
              # PC-GETTER IDIOM: `brsl rX, .+4` (target == next instruction) just
              # loads PC+4 into rX for PC-relative addressing / computed jump tables;
              # it is NOT a real call. Emitting a host call here imbalances the C
-@@ -927,9 +1091,9 @@
+@@ -927,9 +1163,9 @@
                  # `bi $r0` returns via host return) + SPU_DRAIN (drains the
                  # callee's own tail-chains so they don't grow the caller frame)
                  # + image save/restore (adopt-on-serve cannot leak upward).
@@ -23270,7 +23380,7 @@ diff --git a/tools/spu_lifter.py b/tools/spu_lifter.py
              return f"{link} /* TODO spu: brsl unresolved target */;"
          if mn in _COND_BR:
              tgt = self._branch_target(insn)
-@@ -943,7 +1107,7 @@
+@@ -943,7 +1179,7 @@
              # Cross-function conditional branch = conditional tail: a direct
              # tail call when the drain has nothing to do on this step, else
              # the trampoline and unwind (SPU_DIRECT, spu_context.h).
@@ -23279,7 +23389,7 @@ diff --git a/tools/spu_lifter.py b/tools/spu_lifter.py
                      f"{self.prefix}spu_func_{tgt:08X}); }}")
          # Interrupt enable/disable bits on the bi family (bie/bid, irete/iretd,
          # bisle(d)...): bit 0x40000 = E (enable), 0x80000 = D (disable), taking
-@@ -969,14 +1133,14 @@
+@@ -969,14 +1205,14 @@
                  # publish THAT register as the return PC: SPU_RET publishes r0,
                  # and spu_drain_call restarts dispatch when pc != return_pc.
                  if tgt_reg != "0":
@@ -23298,7 +23408,7 @@ diff --git a/tools/spu_lifter.py b/tools/spu_lifter.py
                      "g_spu_trampoline_fn = spu_indirect_branch; return;")
          if mn in ("bisl",):
              # `bisl rt, ra`: rt = link, ra = TARGET. The disassembler emits BOTH
-@@ -992,10 +1156,10 @@
+@@ -992,10 +1228,10 @@
              # here and its `bi $r0` returns via host return.
              # read the target BEFORE writing the link: rt may be the same register as ra
              return (f"{{ uint32_t _tg = {g(tgt_reg)}._u32[0]; {g(link_rt)} = spu_link(0x{(addr + 4) & 0x3FFFC:X}); "
@@ -23311,7 +23421,7 @@ diff --git a/tools/spu_lifter.py b/tools/spu_lifter.py
          # bisled: set link, branch to RA only if an external event is pending.
          if mn in ("bisled",):
              link_rt = insn.raw & 0x7F            # rt = link
-@@ -1003,7 +1167,7 @@
+@@ -1003,7 +1239,7 @@
              # read the target before writing the link: rt may alias ra
              return (f"{{ uint32_t _tg = {g(tgt_reg)}._u32[0]; {g(link_rt)} = spu_link(0x{(addr + 4) & 0x3FFFC:X}); "
                      f"if ((ctx->event_status & ctx->event_mask) != 0) {{ "
@@ -23320,7 +23430,7 @@ diff --git a/tools/spu_lifter.py b/tools/spu_lifter.py
                      f"g_spu_trampoline_fn = spu_indirect_branch; return; }} }}")
          # biz/binz/bihz/bihnz: ops[0] = condition reg, ops[1] = target reg.
          if mn in ("biz", "binz", "bihz", "bihnz"):
-@@ -1017,9 +1181,9 @@
+@@ -1017,9 +1253,9 @@
              if (tgt_reg == "0" and addr not in self.bi_r0_jump) \
                      or addr in self.link_return:
                  if tgt_reg != "0":
@@ -23333,7 +23443,7 @@ diff --git a/tools/spu_lifter.py b/tools/spu_lifter.py
                      f"g_spu_trampoline_fn = spu_indirect_branch; return; }}")
  
          # hint-for-branch: pure performance hint, safe to drop
-@@ -1035,6 +1199,13 @@
+@@ -1035,6 +1271,13 @@
                  f'spu_unsupported(0x{insn.addr:X}, "{mn}");')
  
      # ------------------------------------------------------------------ #
@@ -23347,7 +23457,7 @@ diff --git a/tools/spu_lifter.py b/tools/spu_lifter.py
      def _cond(self, mn: str, reg: str) -> str:
          """Condition expression on preferred slot for conditional branches."""
          word = f"ctx->gpr[{reg}]._u32[0]"
-@@ -1057,17 +1228,22 @@
+@@ -1057,17 +1300,22 @@
          # drain has nothing to do on this step, else hand the target to the
          # trampoline and unwind so the enclosing SPU_DRAIN re-enters (no
          # host-stack growth either way; SPU_DIRECT, spu_context.h).
@@ -23371,7 +23481,7 @@ diff --git a/tools/spu_lifter.py b/tools/spu_lifter.py
          lines.append("")
          lines.append("/* Runtime glue (runtime/spu/spu_channels.c) */")
          lines.append("void spu_register_function(uint32_t addr, void (*fn)(spu_context*));")
-@@ -1081,10 +1257,14 @@
+@@ -1081,10 +1329,14 @@
          lines = [SOURCE_PREAMBLE.format(header_name=header_name), ""]
          weak = "__attribute__((weak)) " if getattr(self, "weak_emit", False) else ""
          for f in self.functions:
@@ -23387,7 +23497,7 @@ diff --git a/tools/spu_lifter.py b/tools/spu_lifter.py
              lines.append("")
  
          # Stubs for cross-function branch/call targets the function-boundary
-@@ -1100,10 +1280,14 @@
+@@ -1100,10 +1352,14 @@
              lines.append(" * function detector did not seed (typically conditional")
              lines.append(" * branches that escape a function's range). */")
              for t in externs:
@@ -23403,10 +23513,16 @@ diff --git a/tools/spu_lifter.py b/tools/spu_lifter.py
              lines.append("")
  
          lines.append("/* Function table */")
-@@ -1188,6 +1372,12 @@
+@@ -1188,6 +1444,18 @@
                          "changes speed, not which code can be reached.")
      p.add_argument("--max-group-insns", type=int, default=4000,
                     help="Cap on instructions per merged group (keeps clang fast).")
++    p.add_argument("--no-loop-head-loads", action="store_true",
++                   help="With register locals, a loop head holds only the registers held on every "
++                        "way in (the old output) instead of every register its loop uses.")
++    p.add_argument("--no-insert-peephole", action="store_true",
++                   help="Lift every shufb as a general shuffle, also where its control is an "
++                        "insertion control (cbd/chd/cwd/cdd or the x forms) from the same block.")
 +    p.add_argument("--no-reg-locals", action="store_true",
 +                   help="Keep every SPU register in ctx->gpr[] at every instruction "
 +                        "(the old output). By default each function holds the "
@@ -23416,11 +23532,14 @@ diff --git a/tools/spu_lifter.py b/tools/spu_lifter.py
      p.add_argument("--force-indirect", default="",
                     help="Comma-separated `bi $rN` addresses to emit as GENERIC "
                          "indirect dispatch, overriding the link-register-return "
-@@ -1311,6 +1501,7 @@
+@@ -1311,6 +1579,10 @@
      insns = disassemble_spu(data, base)
  
      lifter = SPULifter(trace=args.trace, prefix=args.symbol_prefix)
 +    lifter.reg_locals = not (args.no_reg_locals or args.trace)
++    lifter.insert_peephole = not (args.no_insert_peephole or args.trace)
++    global LOOP_HEAD_LOADS
++    LOOP_HEAD_LOADS = not args.no_loop_head_loads
      lifter.bi_r0_jump = compute_bi_r0_jumps(insns, bounds)
      if lifter.bi_r0_jump:
          print(f"  {len(lifter.bi_r0_jump)} `bi $r0` computed-jump site(s) "
