@@ -91,8 +91,11 @@ performance matters more than the graphics card.
   running, races hold 49-55 game frames a second (an earlier "about 22" was measured while another game
   shared the graphics card). Laptops do much worse: a tester's i5-1135G7 races at about 13, with its CPU
   at its power limit. The work now is cutting the CPU the game needs per frame (about 100 ms of CPU
-  time per frame today, spread over its threads), and threads that spin while they wait; lifted SPU
-  code keeps its registers in CPU registers since 13 Nov, and GT5's SPURS jobs take 20% less CPU. A player's
+  time per frame on a fast core, 160 ms on 4 efficient cores), and threads that spin while they wait.
+  Lifted SPU code keeps its registers in CPU registers since 13 Nov, and GT5's SPURS jobs take 20% less
+  CPU. Since v0.1.41 the graphics threads sleep instead of spinning on CPUs with 8 threads or fewer:
+  on 4 cores that's 20% less CPU at the same frame rate, and +25% frames when the CPU is shared with
+  other programs. A player's
   Ryzen 5 3600 showed that drawing fewer frames doesn't help there: the launcher's 30 fps setting
   halved the frames drawn and left the game's speed unchanged, so it's no longer picked by itself.
   Laptops now draw on their dedicated graphics card (v0.1.20).
@@ -122,7 +125,9 @@ performance matters more than the graphics card.
 
 The last few days; the full history since 1 November is in [CHANGELOG.md](CHANGELOG.md).
 
-- **13 Nov 2026:** car tail lights and headlights show their lamps again (they were a pale mirror of the
+- **13 Nov 2026:** on CPUs with 8 threads or fewer, the graphics threads sleep instead of spinning
+  while they wait: on 4 cores, 20% less CPU at the same frame rate, and +25% frames when the CPU is
+  shared (v0.1.41); car tail lights and headlights show their lamps again (they were a pale mirror of the
   sky); with a game update (2.xx), the cockpit view's windows are clear again (they showed a
   blown-out, speckled copy of the screen with a second HUD); the first real steering wheel tried (a Genius Speed Wheel 3): it's now found by
   itself, and wheels with both pedals on one axis get throttle and brake (before, resting was half

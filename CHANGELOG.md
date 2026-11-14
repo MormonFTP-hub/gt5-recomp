@@ -9,6 +9,32 @@ release on the tested rig in [STATUS.md](STATUS.md) unless a day says otherwise.
 
 ## 13 Nov 2026
 
+🏷️ Released as **v0.1.41**
+
+⚡ **Small CPUs and laptops: the graphics threads stop spinning while they wait**
+- Where the CPU goes, measured on a stand-in for a 4-core laptop (the tested rig's i9 limited to 4 of
+  its efficient cores, Arcade race at High Speed Ring): about a third of the CPU went to threads
+  waiting, waking and spinning instead of running the game. The two worst were graphics threads. The
+  thread that hands draws to Direct3D 12 spun between batches, about a third of a core at raised
+  priority, for 12% real work. The thread that walks the PS3 command buffer spun for up to 4 ms each
+  time it waited for the game or an SPU job to write more. On a 4-core CPU that spinning takes CPU from
+  exactly the threads being waited for, and on a laptop it spends the power budget.
+- On CPUs with 8 threads or fewer, both now spin briefly and then sleep. The command walker is woken
+  as soon as an SPU job writes the word it's waiting on; otherwise it checks again within 0.1 ms.
+- Measured on those 4 cores, with the change switched off and on every 10 seconds within one race:
+  - **With nothing else running:** the same frame rate (28 game fps, 1% lower), with **20% less CPU**
+    (3.1 → 2.5 cores busy, 109 → 89 ms of CPU per game frame). A laptop at its power limit can spend
+    the saved power on clock speed.
+  - **With the CPU shared** (another game and a second test copy of the port running at the same
+    time): **+25% game frames** (7.8 → 9.7 fps; +29% in a second race).
+- `PS3_SPIN_SLEEP=1` turns it on for bigger CPUs too, `=0` turns it off.
+- Also in this release, off by default: a SPURS scheduler change that wakes one SPU worker per job
+  instead of all of them (`SPURS_SLOT_WAKE=1`, `SPURS_PROBE_PACE=2000`). It made no measurable
+  difference once the threads stopped spinning (+0.6% ± 4%).
+- For testers: `PS3_AB_PERIOD=10` switches the new behaviour off and on every 10 s and logs `[ab]` lines
+  with game fps and CPU for each half, so one race compares both.
+- The update rebuilds a few files; no re-lift.
+
 🏷️ Released as **v0.1.40**
 
 🚨 **Car lamps show their lights again: red tail lights, headlights with their reflectors** (reported by
