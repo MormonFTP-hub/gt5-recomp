@@ -128,20 +128,24 @@ target_compile_options(gt5 PRIVATE -fno-strict-aliasing -fwrapv -Wno-everything)
 # The same code generation as the Windows build, so both run the game the same way: the lifted PPU
 # code at -O2 with the instructions every AVX2 CPU has (MOVBE folds the byte swap of each big-endian
 # guest access into the access), SPU code with AVX2/FMA and the PS3's round-toward-zero floats. No
-# FMA contraction anywhere: floating-point results match the Windows build's.
+# FMA contraction anywhere: floating-point results match the Windows build's. -mfma lets ppu_vmx.h
+# do vmaddfp/vnmsubfp four lanes at once with the same results (contraction stays off).
 set_source_files_properties(${RECOMP_SOURCES} PROPERTIES
-    COMPILE_OPTIONS "-O2;-w;-mavx2;-mbmi;-mbmi2;-mmovbe;-mlzcnt;-mpopcnt;-ffp-contract=off")
+    COMPILE_OPTIONS "-O2;-w;-mavx2;-mfma;-mbmi;-mbmi2;-mmovbe;-mlzcnt;-mpopcnt;-ffp-contract=off")
 if(SPU_SOURCES)
     set_source_files_properties(${SPU_SOURCES} PROPERTIES
         INCLUDE_DIRECTORIES "${PS3RECOMP_DIR}/runtime/spu"
         COMPILE_DEFINITIONS SPU_USE_DISPATCH_MT
         COMPILE_OPTIONS "-O2;-w;-mavx2;-mfma;-ffp-contract=off;-DSPU_X86_RZ_ALWAYS=1")
 endif()
-# GT5's sound job: its numbers are samples, and it needs every bit of speed to keep up.
-if(EXISTS "${SPU_DIR}/jobs/jD58063CD/spu_recomp.c")
-    set_source_files_properties("${SPU_DIR}/jobs/jD58063CD/spu_recomp.c" PROPERTIES
-        COMPILE_OPTIONS "-O2;-w;-mavx2;-mfma;-ffp-contract=off;-DSPU_X86_RZ_ALWAYS=1;-DSPU_X86_FAST_FLOAT=1")
-endif()
+# GT5's sound job: its numbers are samples, and it needs every bit of speed to keep up. jD58063CD is
+# the disc's; game update 2.17 replaces it with jCB9BD024 (spu_jobs_from_eboot.py, UPDATED).
+foreach(_sound_job jD58063CD jCB9BD024)
+    if(EXISTS "${SPU_DIR}/jobs/${_sound_job}/spu_recomp.c")
+        set_source_files_properties("${SPU_DIR}/jobs/${_sound_job}/spu_recomp.c" PROPERTIES
+            COMPILE_OPTIONS "-O2;-w;-mavx2;-mfma;-ffp-contract=off;-DSPU_X86_RZ_ALWAYS=1;-DSPU_X86_FAST_FLOAT=1")
+    endif()
+endforeach()
 
 target_link_libraries(gt5 PRIVATE ps3recomp_runtime SDL2::SDL2 ${CMAKE_DL_LIBS} m pthread)
 set_target_properties(gt5 PROPERTIES LINKER_LANGUAGE CXX)

@@ -9,6 +9,105 @@ release on the tested rig in [STATUS.md](STATUS.md) unless a day says otherwise.
 
 ## 13 Nov 2026
 
+📺 **Linux: the main menu at about 25-30 fps on a Steam Deck (was about 17)**
+- With the waits above gone, the menu's GPU waits came from two places, both every frame: each new
+  render target was cleared in a submission of its own, waited on after first waiting for the open
+  batch, and each released target made the renderer wait for every batch before it destroyed its
+  cached framebuffers. GT5's menu releases and recreates a target or two a frame.
+- A new colour or depth target is now cleared in the open batch, before the draws that use it (and
+  a new texture is readied there too: in a race those waits were about 1.2 s in every 5 s), and
+  framebuffers go to the same deferred list as released images, destroyed once the batches that may
+  use them are done. (When a batch's list has no room left, that batch is waited on and they go at
+  once, where before the extra entries were dropped.)
+- On a Steam Deck in the main menu: time waiting for the GPU from about 1.2 s to 0.01 s per 5 s, the
+  median frame from 53-58 to 35-36 ms, about 25-27 frames a second, most of them at two vblanks.
+
+🪟 **Linux: a present no longer waits for the frame to be drawn**
+- Each frame is copied into the window, and that copy shared the present's command buffer, so it was
+  waited on at once; it sits in the GPU queue behind the frame being drawn, so every present waited
+  for the whole frame's GPU work: about 11 ms of the graphics thread per frame on a Steam Deck. The
+  window copy now has three command buffers, fences and acquire semaphores of its own, and one is
+  waited on only when its turn comes round again, three presents later.
+- On a Steam Deck in the main menu: a present 11 ms to 0.4 ms, the median frame 62-64 to 53-58 ms
+  (the menu is still paced to three or four vblanks).
+
+⚡ **Game code: vector multiply-adds four lanes at a time (Windows and Linux)**
+- The PS3's vector multiply-add (vmaddfp) and negated multiply-subtract (vnmsubfp) were done one lane
+  at a time, with several checks per lane, and without the CPU's fused multiply-add: about a tenth
+  of a busy GT5 game thread. Now all four lanes go at once with one fused multiply-add, the same
+  flush and NaN rules applied to the four together. The results are bit for bit the same: checked on
+  4 million inputs per operation (random values, zeros, denormals, infinities, NaNs, rounding
+  midpoints, both flush modes) against the per-lane code.
+- The recompiled game code is built with FMA for it (every AVX2 CPU has FMA). Floating-point
+  contraction stays off, so no other result changes.
+- On a Steam Deck in a race: the game thread from about 69% to 62% busy.
+
+🧮 **Linux: texture binding no longer re-hashes every car's cube map at every draw**
+- Each car's small ambient cube map was checked for changes at every draw that bound it, by hashing
+  its six faces byte by byte: in a race on a Steam Deck, about 87% of the time spent binding
+  textures, itself about 13% of the graphics thread. It is now checked once a frame, as the texture
+  cache checks a texture, and hashed 8 bytes at a time: texture binding fell to about 0.2% of all
+  the CPU time. The cars look the same.
+
+⚡ **Linux on small CPUs: the graphics thread naps instead of spinning while it waits for SPU work**
+- GT5's SPU jobs fill gaps in the graphics command stream, and the graphics thread waits at each gap
+  (on a Steam Deck about 1,000-1,400 times a second in a race). It watches the gap so it carries on
+  the moment it is filled, yielding between looks; on Linux that yield returns at once when nothing
+  else is queued on the core, so the wait was a spin, about a fifth of the thread's time, on cores
+  the SPU threads filling the gaps could have used.
+- With 8 logical CPUs or fewer it now watches for the first 30 us, then naps 50 us between looks: a
+  short wait still ends at once, a longer one at most 50 us late. `GCM_FIFO_NAP=0` spins as before,
+  `=1` naps on any CPU.
+- On a Steam Deck over the same ~70 s of a race: the graphics thread 70% to 56% busy, frames about
+  135 to 110 ms on average (82-100 ms on the faster stretches).
+
+🧊 **Linux: the shader cache survives updates**
+- Each cached shader was stamped with the time its translator was built, and any other stamp counted
+  as stale. Every update re-patches and rebuilds that code, so after every update the whole cache was
+  thrown away and the next races compiled every shader again (on a Steam Deck, close to half the
+  graphics thread for minutes). The stamp is now a version number, raised when the translator's
+  settings change; the shader text and the glslang version still decide a hit as before.
+- Checked on a Steam Deck: after the translator code was rebuilt, the menus wrote 7 shaders instead
+  of all 295 again. Caches written by older builds miss once, the first time.
+
+🌗 **Linux: race shadows read on the GPU, and the dark band ahead of the car is gone**
+- GT5 reads its 1024x2048 shadow map as a 16-bit depth texture twice a race frame. The Vulkan
+  renderer could convert depth on the GPU only for the other way GT5 reads depth, so each read
+  waited for the GPU, copied the depth back, converted it on the CPU and uploaded it again. Now a
+  compute pass rounds every depth to 16 bits on the GPU, in command order, exactly as the CPU did
+  (round(d * 65535) in 32-bit integers), into the R16 texture the texture unit samples.
+- The shadow map is drawn in three bands of 682 rows, and only the last band counted as drawn, so
+  the copy through memory carried that band alone; the other two came from stale memory, which
+  showed as a darker band a little ahead of the car. All three bands are read now.
+- On a Steam Deck in a race: time waiting for the GPU from about 1.6-2.1 to 0.7-0.9 s per 5 s, the
+  depth readbacks gone, frames about 113-143 ms.
+
+⚡ **Linux: races about 30% faster on a Steam Deck (the CPU and GPU now work at the same time)**
+- The Vulkan renderer waited for the GPU after every batch of draws and at every present, so the
+  walker idled while the GPU drew and the GPU idled while the walker recorded the next batch (a Steam
+  Deck's GPU went from 100% to 0% in turns). Now up to three batches are in flight, each with its own
+  command buffer, fence, descriptor pool, share of the vertex, index, uniform and upload rings and
+  list of objects to destroy; a full batch or a present is submitted and recording carries on. Only
+  what needs the GPU done still waits for it: readbacks, destroying objects, the engine's own wait.
+  `VK_ASYNC_FLUSH=0` brings back a wait after every batch.
+- The present isn't waited on either: the next present finishes it, so the window shows a frame when
+  the next one is presented.
+- 16-car races kept only 8 of the cars' small ambient cube maps, so they evicted each other every
+  frame, and each miss created a texture and decoded the cube again (about 7 a frame). Now 64 are
+  kept: texture creations in a race went from 259 to 2 per 5 s.
+- On a Steam Deck (OLED, SteamOS 3.9), same race: frames ~175-185 ms to ~122-127 ms (about 5.5 to
+  8.3 a second), time waiting for the GPU from ~1.8-2.2 to ~1.4-1.5 s per 5 s; nothing drawn
+  differently. Menus are unchanged: their frames are paced to four vblanks either way.
+
+⚡ **Update 2.17: the sound job gets its fast floating-point setting back**
+- GT5's sound job (the "soc-job" chain, run 125 times a second whatever the frame rate) is built
+  with `SPU_X86_FAST_FLOAT`: its numbers are sound samples, so the exact SPU range and signed-zero
+  handling can go. Update 2.17 replaces that job (`jD58063CD`) with a new version (`jCB9BD024`), and
+  the setting named only the old one, so on 2.17 the heaviest job in a race ran the slower exact
+  path. Both versions get it now, on Windows and Linux.
+- On a Steam Deck in a race: the job's time went from about 390 to about 340 ms a second, its thread
+  from 86% to 82% busy, and frames from about 135-150 to 130-140 ms. Sound unchanged.
+
 🏷️ Released as **v0.1.41**
 
 ⚡ **Small CPUs and laptops: the graphics threads stop spinning while they wait**
