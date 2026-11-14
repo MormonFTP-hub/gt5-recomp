@@ -6,6 +6,7 @@ the launcher's Updates page shows the newest one's notes.
 
 | Version | Date | What changed |
 |---|---|---|
+| [v0.1.45](https://github.com/MormonFTP-hub/gt5-recomp/releases/tag/v0.1.45) | 14 Nov 2026 | Install game updates and DLC from their .pkg files (launcher, Help), through RPCS3 |
 | [v0.1.44](https://github.com/MormonFTP-hub/gt5-recomp/releases/tag/v0.1.44) | 14 Nov 2026 | The launcher says why the game stopped when Windows recorded it (a crash the game couldn't report, or Microsoft Defender) |
 | [v0.1.43](https://github.com/MormonFTP-hub/gt5-recomp/releases/tag/v0.1.43) | 14 Nov 2026 | Leaner SPU code: the sound mixer 22% faster, all SPU jobs 14% less CPU (one re-lift) |
 | [v0.1.42](https://github.com/MormonFTP-hub/gt5-recomp/releases/tag/v0.1.42) | 13 Nov 2026 | Linux and the Steam Deck much quicker, and the PS3's vector multiply-add four lanes at once (community pull request #30); a steering wheel that stops answering no longer keeps driving the car |

@@ -192,6 +192,9 @@ namespace Gt5Launcher
             { "help.saved", new[] { "Saved to your desktop as {0}. Attach it to your report (GitHub accepts .txt).", "已保存到桌面：{0}。请附加到报告中（GitHub 接受 .txt）。" } },
             { "help.report", new[] { "Report a problem", "报告问题" } },
             { "help.shaders", new[] { "Clear the shader cache", "清除着色器缓存" } },
+            { "help.pkg", new[] { "Install a game update or DLC (.pkg)", "安装游戏更新或 DLC（.pkg）" } },
+            { "pkg.running", new[] { "Close the game first: installing a package changes its files.", "请先关闭游戏：安装包会更改游戏文件。" } },
+            { "pkg.missing", new[] { "GT5\\scripts\\install_pkg.ps1 is missing: update first (Updates page).", "缺少 GT5\\scripts\\install_pkg.ps1：请先更新（更新页面）。" } },
             { "shaders.ask", new[] { "Delete the shader cache ({0} files, {1:0} MB)?\n\nThe game compiles its shaders again as it needs them, so the first visit to each menu, car and track stutters again for a while, as after a fresh install. Saves, settings and game files are not touched.", "删除着色器缓存（{0} 个文件，{1:0} MB）？\n\n游戏会在需要时重新编译着色器，因此每个菜单、车辆和赛道第一次出现时会再次短暂卡顿，就像刚安装时一样。存档、设置和游戏文件不受影响。" } },
             { "shaders.empty", new[] { "The shader cache is already empty.", "着色器缓存已经是空的。" } },
             { "shaders.done", new[] { "Shader cache cleared. The game compiles its shaders again as you play.", "已清除着色器缓存。游戏会在你游玩时重新编译着色器。" } },
@@ -732,7 +735,7 @@ namespace Gt5Launcher
                 new[] { "help.save", "save" }, new[] { "help.logs", "logs" }, new[] { "help.report", "https://github.com/MormonFTP-hub/gt5-recomp/issues/new/choose" },
                 new[] { "help.readme", "https://github.com/MormonFTP-hub/gt5-recomp#faq" }, new[] { "help.versions", "https://github.com/MormonFTP-hub/gt5-recomp/blob/main/VERSIONS.md" },
                 new[] { "help.changes", "https://github.com/MormonFTP-hub/gt5-recomp/blob/main/CHANGELOG.md" },
-                new[] { "help.shaders", "shaders" },
+                new[] { "help.shaders", "shaders" }, new[] { "help.pkg", "pkg" },
             };
             foreach (var l in links)
             {
@@ -752,6 +755,22 @@ namespace Gt5Launcher
             {
                 if (what == "logs") { Directory.CreateDirectory(P.Logs); Process.Start("explorer.exe", "\"" + P.Logs + "\""); return; }
                 if (what == "shaders") { ClearShaderCache(); return; }
+                if (what == "pkg")
+                {
+                    // install_pkg.ps1 does the work through RPCS3, in a console window of its own.
+                    if (GameRunning() || running) { MessageBox.Show(this, T.Get("pkg.running"), "GT5"); return; }
+                    string script = Path.Combine(Path.Combine(P.Gt5, "scripts"), "install_pkg.ps1");
+                    if (!File.Exists(script)) { MessageBox.Show(this, T.Get("pkg.missing"), "GT5"); return; }
+                    var dlg = new OpenFileDialog();
+                    dlg.Filter = "PS3 packages (*.pkg)|*.pkg"; dlg.Multiselect = true; dlg.Title = T.Get("help.pkg");
+                    if (dlg.ShowDialog(this) != DialogResult.OK || dlg.FileNames.Length == 0) return;
+                    var a = new StringBuilder("-NoProfile -ExecutionPolicy Bypass -File \"" + script + "\"");
+                    foreach (var f in dlg.FileNames) a.Append(" \"" + f + "\"");
+                    var psi = new ProcessStartInfo("powershell.exe", a.ToString());
+                    psi.UseShellExecute = true; psi.WorkingDirectory = P.Gt5;
+                    Process.Start(psi);
+                    return;
+                }
                 if (what == "save")
                 {
                     string desk = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);

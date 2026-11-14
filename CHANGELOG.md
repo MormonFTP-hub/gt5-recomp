@@ -9,6 +9,27 @@ release on the tested rig in [STATUS.md](STATUS.md) unless a day says otherwise.
 
 ## 14 Nov 2026
 
+🏷️ Released as **v0.1.45**
+
+📦 **Install game updates and DLC from their .pkg files** (asked for by Keduboneur78 on Discord: "just
+import PKG files the way RPCS3 does")
+- The launcher's *Help > Install a game update or DLC (.pkg)* takes the packages you pick
+  (`GT5\scripts\install_pkg.ps1 <files or folder>` does the same). Before, an update meant installing it
+  in RPCS3, copying its folder into `GT5\hdd0` by hand and unlocking its executable.
+- It reads each package's header, puts updates in version order, and has RPCS3 install them: RPCS3's
+  window opens for each, and the script answers its *Do you want to install this package?* and closes
+  it when the install is done. Updates RPCS3 already has are skipped, and its errors are passed on
+  (*Update is for version 01.12, but you don't have any data installed*).
+- Then the game's folder is copied from RPCS3's `dev_hdd0` to `GT5\hdd0` (all but `EBOOT.BIN`), and
+  `update_exe.ps1` unlocks the update's executable into `GT5\input\EBOOT.elf`. What's left is one
+  `setup.bat` to build the game for that version.
+- Checked with the European updates 1.05 and 1.06 and a copy of RPCS3 0.0.37:
+  - 1.05, already installed, was skipped; 1.06 installed with no clicks.
+  - The folder landed in `GT5\hdd0` as version 01.06.
+  - `EBOOT.elf` became 1.06's executable, with the disc's kept beside it.
+- RPCS3 doesn't start from a temporary folder: run it from a normal one. DLC vouchers still need
+  their licence keys (README, DLC).
+
 🏷️ Released as **v0.1.44**
 
 🩺 **The launcher says why the game stopped, when Windows knows** (for reports like

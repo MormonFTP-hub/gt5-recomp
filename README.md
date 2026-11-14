@@ -727,7 +727,18 @@ Check a file's hash with `Get-FileHash <file> -Algorithm SHA1` in PowerShell.
 ### Game updates (2.xx)
 
 A game update brings a new executable and data the game reads from the PS3's hard disk (for 2.01,
-about 2.2 GB of files in `PDIPFS`). The port needs both:
+about 2.2 GB of files in `PDIPFS`). The port needs both.
+
+**The easy way, from your update's `.pkg` files (since v0.1.45):** in the launcher, *Help > Install a game
+update or DLC (.pkg)*, and pick the update packages. Pick all of them from the first one (1.05, 1.06
+... up to the version you want): RPCS3 installs updates only in order, and the ones it already has are
+skipped. This runs `GT5\scripts\install_pkg.ps1`. It installs the packages with RPCS3 (its window opens
+for each one; leave it be), copies the game's folder into `GT5\hdd0` and unlocks the new executable:
+steps 1 to 3 below. Then run `setup.bat` once (step 4). It needs RPCS3: the installer's own copy in
+`tools\rpcs3` is found by itself, or set `GT5_RPCS3` to your `rpcs3.exe`. Without the launcher:
+`powershell -ExecutionPolicy Bypass -File GT5\scripts\install_pkg.ps1 <folder with the .pkg files>`.
+
+By hand:
 
 1. **Get the update's files**: install the update in [RPCS3](https://rpcs3.net) (*File > Install
    Packages/Raps/Edats* with the update's `.pkg`), or copy the game's folder from your PS3's hard disk.
@@ -759,8 +770,9 @@ gift cars. Each DLC item is a small "voucher" file the game unlocks it from; the
 themselves come with the updates. Only DLC you bought unlocks: a voucher opens only with the key of
 its licence.
 
-1. **The vouchers**: install the DLC `.pkg` files in RPCS3 (*File > Install Packages/Raps/Edats*), or
-   use your PS3's hard disk, and copy `dev_hdd0\game\<title ID>\USRDIR\vou` to
+1. **The vouchers**: pick the DLC `.pkg` files in the launcher's *Help > Install a game update or DLC
+   (.pkg)*, which puts them in place. Or install them in RPCS3 (*File > Install Packages/Raps/Edats*),
+   or use your PS3's hard disk, and copy `dev_hdd0\game\<title ID>\USRDIR\vou` to
    `GT5\hdd0\game\<title ID>\USRDIR\vou`.
 2. **The licence keys**: for each voucher, the 16-byte key of its licence, saved as
    `GT5\hdd0\home\00000001\exdata\<content ID>.rifkey`. The content ID is the name of the licence

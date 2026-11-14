@@ -126,7 +126,8 @@ performance matters more than the graphics card.
 
 The last few days; the full history since 1 November is in [CHANGELOG.md](CHANGELOG.md).
 
-- **14 Nov 2026:** SPU code leaner: the sound mixer 22% faster, all SPU jobs 14% less CPU (one re-lift)
+- **14 Nov 2026:** game updates and DLC install from their `.pkg` files (launcher, Help), through
+  RPCS3 (v0.1.45); the launcher says why the game stopped when Windows recorded it (v0.1.44); SPU code leaner: the sound mixer 22% faster, all SPU jobs 14% less CPU (one re-lift)
   (v0.1.43).
 - **13 Nov 2026:** Linux and the Steam Deck much quicker (menus ~17 → ~25-27 fps, race frames ~180 →
   ~110 ms on a Deck) and the PS3's vector multiply-add four lanes at once on every PC, from a community
