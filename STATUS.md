@@ -125,7 +125,10 @@ performance matters more than the graphics card.
 
 The last few days; the full history since 1 November is in [CHANGELOG.md](CHANGELOG.md).
 
-- **13 Nov 2026:** on CPUs with 8 threads or fewer, the graphics threads sleep instead of spinning
+- **13 Nov 2026:** Linux and the Steam Deck much quicker (menus ~17 → ~25-27 fps, race frames ~180 →
+  ~110 ms on a Deck) and the PS3's vector multiply-add four lanes at once on every PC, from a community
+  pull request ([#30](https://github.com/MormonFTP-hub/gt5-recomp/pull/30)); a steering wheel that stops
+  answering no longer keeps driving the car (v0.1.42); on CPUs with 8 threads or fewer, the graphics threads sleep instead of spinning
   while they wait: on 4 cores, 20% less CPU at the same frame rate, and +25% frames when the CPU is
   shared (v0.1.41); car tail lights and headlights show their lamps again (they were a pale mirror of the
   sky); with a game update (2.xx), the cockpit view's windows are clear again (they showed a

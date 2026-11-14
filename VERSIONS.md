@@ -6,6 +6,7 @@ the launcher's Updates page shows the newest one's notes.
 
 | Version | Date | What changed |
 |---|---|---|
+| [v0.1.42](https://github.com/MormonFTP-hub/gt5-recomp/releases/tag/v0.1.42) | 13 Nov 2026 | Linux and the Steam Deck much quicker, and the PS3's vector multiply-add four lanes at once (community pull request #30); a steering wheel that stops answering no longer keeps driving the car |
 | [v0.1.41](https://github.com/MormonFTP-hub/gt5-recomp/releases/tag/v0.1.41) | 13 Nov 2026 | Small CPUs and laptops: the graphics threads sleep instead of spinning while they wait (20% less CPU on 4 cores, +25% frames when the CPU is shared) |
 | [v0.1.40](https://github.com/MormonFTP-hub/gt5-recomp/releases/tag/v0.1.40) | 13 Nov 2026 | Car lamps show their lights again: red tail lights, headlights with their reflectors |
 | [v0.1.39](https://github.com/MormonFTP-hub/gt5-recomp/releases/tag/v0.1.39) | 13 Nov 2026 | Cockpit view with a game update (2.xx): the windows are clear again |

@@ -9,6 +9,21 @@ release on the tested rig in [STATUS.md](STATUS.md) unless a day says otherwise.
 
 ## 13 Nov 2026
 
+🏷️ Released as **v0.1.42**
+
+🛞 **A steering wheel that stops answering no longer keeps driving the car** (reported by brocolison on
+Discord, Genius Speed Wheel 3)
+- Once, mid-race, the car accelerated by itself and steered left with no control. The button setting he
+  added afterwards (`PS3_WHEEL_BUTTONS=cross=1,square=2,circle=3,triangle=4,start=10`) is the same as the
+  defaults, so it can't be what fixed it. The likeliest cause is the wheel briefly not answering (a USB
+  hiccup, a loose cable): the port went on giving the game the wheel's last state, throttle and steering
+  included, for a second or more, then dropped the wheel and looked for it again only every few seconds.
+- Now after 50 ms without an answer the rim is centred and the pedals released, with the wheel still
+  attached. After a second it's closed and looked for every half second. When the same wheel comes back,
+  it keeps the rest points measured at the start, so a pedal held at that moment doesn't count as released.
+- `play.err` says `[wheel] not answering` and `answering again` when it happens. Not tried on a real wheel
+  (this PC has none); it builds and the game runs as before without one.
+
 📺 **Linux: the main menu at about 25-30 fps on a Steam Deck (was about 17)**
 - With the waits above gone, the menu's GPU waits came from two places, both every frame: each new
   render target was cleared in a submission of its own, waited on after first waiting for the open
