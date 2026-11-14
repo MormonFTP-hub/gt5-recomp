@@ -8,6 +8,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Diagnostics.Eventing.Reader;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Globalization;
@@ -117,6 +118,7 @@ namespace Gt5Launcher
             { "started", new[] { "Starting the game...", "正在启动游戏..." } },
             { "stopped", new[] { "The game has closed.", "游戏已关闭。" } },
             { "quickexit", new[] { "The game closed right after starting. Its log is in GT5\\logs\\play.err (Help: Save logs for a report).", "游戏启动后立即关闭。日志在 GT5\\logs\\play.err（帮助：保存日志用于报告）。" } },
+            { "crashed", new[] { "The game stopped. Windows says: {0}. This is in GT5\\logs\\play.err too (Help: Save logs for a report).", "游戏已停止。Windows 报告：{0}。这也写在 GT5\\logs\\play.err 里（帮助：保存日志用于报告）。" } },
             { "version", new[] { "Version", "版本" } },
             { "devbuild", new[] { "development build", "开发版本" } },
             // Display
@@ -975,6 +977,12 @@ namespace Gt5Launcher
                 }
                 try { cmd.WaitForExit(); } catch { }
                 bool quick = (DateTime.Now - start).TotalSeconds < 25;
+                // A game that ends without writing why (a crash its own handler couldn't report, or a
+                // virus scanner stopping it) is usually in Windows' own records: put that where a report
+                // will carry it.
+                string why = WindowsSaysWhy(start);
+                if (why != null)
+                    try { File.AppendAllText(Path.Combine(P.Logs, "play.err"), "\r\n[launcher] Windows says: " + why + "\r\n"); } catch { }
                 try
                 {
                     BeginInvoke((MethodInvoker)delegate
@@ -983,12 +991,54 @@ namespace Gt5Launcher
                         playButton.Text = T.Get("play"); playButton.Enabled = true;
                         if (WindowState == FormWindowState.Minimized) WindowState = FormWindowState.Normal;
                         Activate();
-                        status.Text = quick ? T.Get("quickexit") : T.Get("stopped");
+                        status.Text = why != null ? string.Format(T.Get("crashed"), why) : quick ? T.Get("quickexit") : T.Get("stopped");
                     });
                 }
                 catch { }
             });
             th.IsBackground = true; th.Start();
+        }
+
+        // Why Windows ended the game, when it recorded it while the game ran: an Application Error for
+        // gt5.exe (the exception and the module it was in) or Microsoft Defender acting on a GT5 file.
+        // Null when there's nothing, or the logs can't be read.
+        static string WindowsSaysWhy(DateTime since)
+        {
+            var found = new List<string>();
+            long ms = (long)(DateTime.Now - since).TotalMilliseconds + 15000;
+            try
+            {
+                var q = new EventLogQuery("Application", PathType.LogName,
+                    "*[System[Provider[@Name='Application Error'] and EventID=1000 and TimeCreated[timediff(@SystemTime) <= " + ms + "]]]");
+                using (var r = new EventLogReader(q))
+                    for (EventRecord e = r.ReadEvent(); e != null; e = r.ReadEvent())
+                        using (e)
+                        {
+                            var p = e.Properties;
+                            if (p.Count < 8 || !string.Equals(Convert.ToString(p[0].Value), "gt5.exe", StringComparison.OrdinalIgnoreCase)) continue;
+                            string s = string.Format("gt5.exe crashed with exception 0x{0} in {1} at offset {2}",
+                                Convert.ToString(p[6].Value), Convert.ToString(p[3].Value), Convert.ToString(p[7].Value));
+                            if (!found.Contains(s)) found.Add(s);
+                        }
+            }
+            catch { }
+            try
+            {
+                var q = new EventLogQuery("Microsoft-Windows-Windows Defender/Operational", PathType.LogName,
+                    "*[System[(EventID=1116 or EventID=1117) and TimeCreated[timediff(@SystemTime) <= " + ms + "]]]");
+                using (var r = new EventLogReader(q))
+                    for (EventRecord e = r.ReadEvent(); e != null; e = r.ReadEvent())
+                        using (e)
+                        {
+                            string d = null;
+                            try { d = e.FormatDescription(); } catch { }
+                            if (d == null || d.IndexOf("gt5", StringComparison.OrdinalIgnoreCase) < 0) continue;
+                            string s = "Microsoft Defender " + (e.Id == 1117 ? "acted on" : "flagged") + " a GT5 file (Windows Security, Protection history)";
+                            if (!found.Contains(s)) found.Add(s);
+                        }
+            }
+            catch { }
+            return found.Count == 0 ? null : string.Join("; ", found.ToArray());
         }
 
         void ApplyWindowMode(IntPtr hwnd, string mode)

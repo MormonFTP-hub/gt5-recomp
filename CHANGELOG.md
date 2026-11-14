@@ -9,6 +9,22 @@ release on the tested rig in [STATUS.md](STATUS.md) unless a day says otherwise.
 
 ## 14 Nov 2026
 
+🏷️ Released as **v0.1.44**
+
+🩺 **The launcher says why the game stopped, when Windows knows** (for reports like
+[#31](https://github.com/MormonFTP-hub/gt5-recomp/issues/31), where the game closed at once and its log
+just stopped)
+- Some crashes skip the game's own crash report: a "fast fail" (exception `0xC0000409`) ends the game
+  on the spot. So does Microsoft Defender stopping it. Either way `play.err` stops mid-start with no
+  error in it. Windows records both, so the launcher now looks when the game ends. It checks the
+  Application log for an *Application Error* in `gt5.exe` (the exception, the module and the offset)
+  and Defender's history, for the time the game ran.
+- What it finds is shown in the launcher ("The game stopped. Windows says: ...") and added to
+  `play.err` as a `[launcher] Windows says:` line, so *Help > Save logs* carries it into a report.
+- Checked against this PC's own records: they hold three earlier `gt5.exe` fast-fails from test builds,
+  read back with the code, module and offset. The update rebuilds the launcher (`Update.bat`, or the
+  launcher's update).
+
 🏷️ Released as **v0.1.43**
 
 🎵 **Leaner SPU code: GT5's sound mixer 22% faster, all SPU jobs 14% less CPU** (one re-lift, done by
