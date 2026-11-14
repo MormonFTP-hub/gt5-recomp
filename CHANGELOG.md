@@ -9,6 +9,24 @@ release on the tested rig in [STATUS.md](STATUS.md) unless a day says otherwise.
 
 ## 13 Nov 2026
 
+🏷️ Released as **v0.1.40**
+
+🚨 **Car lamps show their lights again: red tail lights, headlights with their reflectors** (reported by
+Angel4eva on GitHub, [#14](https://github.com/MormonFTP-hub/gt5-recomp/issues/14), a Lancer Evolution X's
+tail lights, and by brocolison on Discord, "can't see headlight details")
+- Tail lights and headlights showed a plain, pale mirror of the sky and trees instead of the lamp inside:
+  the Lancer's red clusters were white-grey patches, and headlights were flat discs.
+- GT5 draws a lamp's glass by reading the picture already drawn under it (the red lamp, the reflector)
+  at its own spot on screen and tinting it. It works out that spot with the y axis counting up from the
+  bottom of the screen, as the PS3 can be told to. The Windows renderer always counted from the top, so
+  each lens read the picture upside down, sky where the lamp should be. It now uses the PS3's setting
+  (the Linux and Android renderer already did).
+- The lens tint is a fixed blend colour the game sets for the glass (amber on an indicator); it wasn't
+  passed on either, and now is.
+- Checked on this PC with the European disc at 1080p: the Lancer Evolution X at car select and in a race
+  (chase camera, paused, before and after), the Fiat 500 and Alfa Brera at car select, and the menus,
+  cockpit, bonnet and bumper views and a replay look as before.
+
 🏷️ Released as **v0.1.39**
 
 🚗 **Cockpit view with a game update (2.xx): the windows are clear again** (reported on Discord by

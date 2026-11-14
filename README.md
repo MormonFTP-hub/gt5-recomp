@@ -248,7 +248,7 @@ especially: the port was tuned on one desktop with an NVIDIA card.
 
 | Question | Short answer |
 |---|---|
-| Steering wheels? | 🧪 New. First real wheel: a Genius Speed Wheel 3 Vibration (`0458:3017`, tested by brocolison, [#29](https://github.com/MormonFTP-hub/gt5-recomp/pull/29)) attaches as an emulated G27; since 13 Nov it's found by itself and its one-axis pedals work as throttle and brake. Logitech, Thrustmaster and Fanatec wheels are picked up by themselves but still untried: [wheel owners wanted](#faq) |
+| Steering wheels? | 🧪 New. First real wheel: a Genius Speed Wheel 3 Vibration (`0458:3017`, tested by brocolison, [#29](https://github.com/MormonFTP-hub/gt5-recomp/pull/29)) attaches as an emulated G27; since 13 Nov it's found by itself and its one-axis pedals work as throttle and brake (a full race on v0.1.39). Logitech, Thrustmaster and Fanatec wheels are picked up by themselves but still untried: [wheel owners wanted](#faq) |
 | Force feedback? | 🧪 New, with wheel support, also untried on a real wheel |
 | Widescreen (16:9)? | ✅ Yes, GT5 is a 16:9 game |
 | Ultrawide (21:9, 32:9)? | ✅ New: a wider view, with the HUD kept 16:9 in the middle |
@@ -287,7 +287,9 @@ a **Genius Speed Wheel 3 Vibration** attaches as the G27, and the game sends it 
 race. It has no force feedback, and both pedals sit on one axis. Since 13 Nov the port finds it by
 itself (Windows calls it a joystick, so before that it needed `set "PS3_WHEEL=0458:3017"`) and splits
 that axis where it rests: one way is throttle, the other is brake. If they're the wrong way round:
-`set "PS3_WHEEL_PEDALS=throttle=Yinv"`. Other wheels with pedals on one axis get the same.
+`set "PS3_WHEEL_PEDALS=throttle=Yinv"`. Other wheels with pedals on one axis get the same. On v0.1.39
+brocolison raced a full 16-car field with it, throttle and brake both working, with the keyboard for
+the menus (that wheel has no d-pad). A pad or the keyboard works alongside any wheel.
 
 What hasn't been checked: force feedback on a real wheel, including which way the forces push. So
 **wheel owners are wanted**: please

@@ -73,7 +73,8 @@ performance matters more than the graphics card.
   force-feedback commands arrive. The first real wheel, a player's Genius Speed Wheel 3 Vibration (no
   force feedback, both pedals on one axis), attaches and gets the game's commands in a race
   ([#29](https://github.com/MormonFTP-hub/gt5-recomp/pull/29)); since 13 Nov it's found by itself and
-  its pedal axis splits into throttle and brake. **Force feedback is still untried on a real wheel.** Wheel owners:
+  its pedal axis splits into throttle and brake: on v0.1.39 the player raced a full 16-car field with it,
+  using the keyboard for the menus. **Force feedback is still untried on a real wheel.** Wheel owners:
   [tell us how it goes](https://github.com/MormonFTP-hub/gt5-recomp/issues/new?template=1-tried-it.yml),
   with `GT5\logs\play.err` attached (settings are in the README's FAQ).
 - **The picture can freeze on one screen at the first start** while the game carries on behind it
@@ -121,7 +122,8 @@ performance matters more than the graphics card.
 
 The last few days; the full history since 1 November is in [CHANGELOG.md](CHANGELOG.md).
 
-- **13 Nov 2026:** with a game update (2.xx), the cockpit view's windows are clear again (they showed a
+- **13 Nov 2026:** car tail lights and headlights show their lamps again (they were a pale mirror of the
+  sky); with a game update (2.xx), the cockpit view's windows are clear again (they showed a
   blown-out, speckled copy of the screen with a second HUD); the first real steering wheel tried (a Genius Speed Wheel 3): it's now found by
   itself, and wheels with both pedals on one axis get throttle and brake (before, resting was half
   throttle); the stutter the first time you see a car or track is about three times shorter: new
