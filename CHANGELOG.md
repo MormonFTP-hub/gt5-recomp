@@ -9,6 +9,23 @@ release on the tested rig in [STATUS.md](STATUS.md) unless a day says otherwise.
 
 ## 14 Nov 2026
 
+🏷️ Released as **v0.1.46**
+
+☀️ **Races at 1080p get the right brightness: no more blown-out white or too-dark tracks** (reported by
+Keduboneur78 on Discord: Speed Test's track near-white even at −1.0 EV)
+- GT5 sets each frame's exposure from a small 16x8 copy of the scene that it reads back from the
+  graphics chip. In 1080p mode that copy sits in memory that a bigger image left over from an earlier
+  scene also covers, and the Windows renderer read it from that leftover image. So auto-exposure judged
+  every race by a frozen patch of whatever was shown before (often the title screen's white city), and
+  a race came out as bright or as dark as that patch suggested: Speed Test blown out to white, or High
+  Speed Ring almost black on this PC.
+- It now reads the image the game actually measures into, as the Linux and Android renderer already
+  did. 720p mode was never affected.
+- Checked on this PC with the European disc: High Speed Ring at 1080p averages a brightness of 81, like
+  the same start at 720p (84); before, with the leftover patch, it was 17. The play.err now says which
+  image feeds the exposure (`[blit-readback] source now ...`). `LD_RECT_PICK=0` brings back the old
+  behaviour. Speed Test itself is a DLC course not tested here.
+
 🏷️ Released as **v0.1.45**
 
 📦 **Install game updates and DLC from their .pkg files** (asked for by Keduboneur78 on Discord: "just
