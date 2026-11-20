@@ -99,7 +99,8 @@ launcher: every setting in one window, then **Play**. No more editing `play.bat`
 
 - **Display:** the renderer, resolution, anti-aliasing (NVIDIA DLSS, on an RTX card), shadows, frame
   generation, **borderless full screen** (the default), a maximized window or a window size, screen shape
-  (ultrawide) and the frame rate (60 or 30 fps). The rows say what the game's own menu says; a row that
+  (ultrawide), the frame rate (60 or 30 fps) and [asynchronous shader loading](#shaders). The rows say
+  what the game's own menu says; a row that
   means nothing with another setting's value is left out, as in the game (no Multiplier while frame
   generation is off), and with Vulkan chosen the rows it can't do yet are greyed.
 - **Controls:** the controller's triggers (throttle and brake, or as on a PS3 pad), steering wheel on/off,
@@ -214,10 +215,30 @@ To play the previous build right away instead, copy `GT5\build\gt5.previous.exe`
 `GT5\build\gt5.exe` (the last update kept it). Please also
 [report what went wrong](https://github.com/MormonFTP-hub/gt5-recomp/issues/new?template=2-problem.yml).
 
+<a id="test-builds"></a>
+
+### Test builds
+
+Changes still being tried out go to a **test build** first: the `test` branch of this repository, with
+no version number and no release. Releases, new installs and the launcher's Update never use it. To try it:
+
+```
+powershell -ExecutionPolicy Bypass -File update.ps1 -Test
+```
+
+A plain update (`update.ps1`, `Update.bat` or the launcher's **Update now**) goes back to the newest
+release. What the current test build changes is at the top of
+[its CHANGELOG](https://github.com/MormonFTP-hub/gt5-recomp/blob/test/CHANGELOG.md) (the entries above
+the newest "Released as" line), and each new one is announced in
+[Announcements](https://github.com/MormonFTP-hub/gt5-recomp/discussions/categories/announcements) and in
+the Discord's releases channel. Expect rough edges, and say "test build" and its date when you report
+something.
+
 ### Other options
 
 | Command | What it does |
 |---|---|
+| `update.ps1 -Test` | The [test build](#test-builds): changes still being tried out. A plain update goes back. |
 | `update.ps1 -Dev` | The newest changes, before they're released. |
 | `update.ps1 -NoBuild` | Switch versions without building; build later with `GT5\scripts\build.cmd gt5`. |
 | `update.ps1 -Force` | Re-generate and rebuild everything, even when nothing changed. |
@@ -594,7 +615,8 @@ since v0.1.21 that movie is skipped.) Attach that run's log to
 [issue #10](https://github.com/MormonFTP-hub/gt5-recomp/issues/10), with your graphics card: it's
 `GT5\logs\play.err` until you start the game again, then `GT5\logs\play.prev.err` (each start keeps the
 previous log under that name; builds before v0.1.10 didn't, so there copy `play.err` before restarting). A
-line in it starting with `[d3d-fail]` says what failed, and that decides the fix.
+line in it starting with `[d3d-fail]` says what failed, and that decides the fix. If no new picture came
+for 8 seconds, a `[HANG]` report in the same log says what each busy thread was doing at that moment.
 
 **Q: How do I attach my log to an issue? GitHub won't take it.**
 
@@ -616,6 +638,22 @@ see) and gives a fresh start; the first visit to each menu, car and track then s
 while. It can't fix or cause a wrong picture: a cached shader is only used for exactly the same
 source, so a game update, a mod or a new version of the port never picks up an old one by mistake.
 Saves, settings and game files are not touched. On Linux, delete `GT5/shadercache` by hand.
+
+<a id="shaders"></a>
+
+**Q: What are "Preparing shaders" and "Asynchronous shader loading"?**
+
+**A: Two ways of keeping new shaders from stopping the game.** The first time a car, track or menu is
+drawn, its shaders are built for your graphics card, and the picture used to pause for that.
+- **Preparing shaders:** after an update, or after a graphics setting that changes the shaders (DLSS or
+  frame generation on or off, Shadows, the render resolution), the launcher first builds everything your
+  game has drawn before, plus a general stand-in, in a short step before the game starts. Updates do the
+  same. Details are in `GT5\logs\prepare.log`.
+- **Asynchronous shader loading** (Display, **On** by default, DirectX 12): a part whose shader isn't
+  ready yet is drawn at once with the stand-in and switched over when its own is done, instead of the
+  picture pausing. On a PC that has never played, about one part in fifty can still be missing for a
+  moment in the first race. **Off** waits for each new shader, as before. Vulkan always builds new
+  shaders in the background, so it has no such row.
 
 **Q: Is this legal? Do I need the game?**
 
@@ -1081,6 +1119,11 @@ so the launcher's settings win. Some useful ones:
 | `PS3_MUTE=1` | No sound. |
 | `RSX_SHADER_CACHE_DIR=<dir>` | Where compiled shaders are cached (default `scratch\rsx_shader_cache_v2`). |
 | `LD_ASYNC_SHADERS=0` | Compile new shaders one at a time on the graphics thread, as before 13 Nov, instead of on up to 8 threads alongside it. |
+| `LD_SHADERS=wait` | Asynchronous shader loading off (the Display setting writes it): the picture waits for each new shader. See the [FAQ](#shaders). |
+| `LD_FG_ALWAYS=0` | Frame generation only where the game draws a 3D scene, as before 19 Nov; by default it makes frames on every screen (menus, pause, the pre-race screen, replays). |
+| `PS3_HANG_S=8` | After how many seconds without a new picture `logs\play.err` gets a `[HANG]` report (8 by default; `0` = none). |
+| `SPURS_SLOT_WAKE=0` | Wake every SPU worker thread for each job, as before v0.1.95 (by default only the one that gets the job). |
+| `GT5_NATIVE_MIXER=0`, `GT5_NATIVE_SND=0`, `GT5_NATIVE_GEO=0` | Run the translated PS3 code instead of the native PC code: the sound mixer (v0.1.91), the reverb and the EQ (v0.1.92), the geometry jobs (v0.1.93). `=2` runs both and logs any difference (slow, for testing). |
 | `GT5_MOD_<NAME>=1` | Turns on a game-code mod from `GT5\mods` (see [MODDING.md](MODDING.md)). |
 | `PS3_TEX_DUMP=1` | Writes every texture the game shows to `GT5\textures\dump` (DDS and PNG), for making texture packs. See [MODDING.md](MODDING.md#2-textures-and-hd-texture-packs). DirectX 12 only for now. |
 | `PS3_TEX_REPLACE=0` | Don't use the texture files in `GT5\textures\replace` (an HD texture pack); they're used whenever there are any. |
@@ -1135,6 +1178,12 @@ your way around. [CONTRIBUTING.md](CONTRIBUTING.md) has the few rules.
 - [ps3recomp](https://github.com/sp00nznet/ps3recomp) and [GT5P](https://github.com/sp00nznet/GT5P)
   by Ned Heller (sp00nznet), MIT licensed; their licences are in `licenses/`.
 - ps3recomp's live D3D12 renderer began as caner (canersaka)'s work for Yakuza: Dead Souls.
+- [Project Tourline 5](https://github.com/mathewdouglas/Project-Tourline-5) by Mathew Douglas, another
+  GT5 port built on ps3recomp, MIT licensed (its licence and authors are in `licenses/`). From it: freeing
+  the runtime's lock slots so long sessions don't run out of them (adapted from its fix), the job system's
+  state in the `[HANG]` report (after its stall dump), hashing textures the game keeps in full so changed
+  ones aren't missed (after its finding), and the size of the help bars' button pictures used by Button
+  symbols. Each place says so in its source.
 - RPCS3, envytools and Mesa's nv30 driver were consulted as references for hardware behaviour.
 
 <a id="license"></a>
