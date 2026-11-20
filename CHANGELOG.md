@@ -9,6 +9,7 @@ release on the tested rig in [STATUS.md](STATUS.md) unless a day says otherwise.
 
 ## 20 Nov 2026
 
+- **Installer:** when Git can't use its own certificate file ("error adding trust anchors", a damaged Git for Windows, #46), downloading the code is tried again through Windows' certificate store, and the install keeps that setting so updates work too. Checked with a broken certificate file in Git's global settings (the retry gets through) and on a normal PC (nothing changes).
 - **Nothing left out while shaders build** (DirectX 12, part of Asynchronous shader loading): an object whose own shader is still being built is drawn at once with a general stand-in and switched over when the real one is ready. The stand-in's own shaders are built once in the "Preparing shaders" step (about 20 seconds). On a PC that has not played yet, about one part in fifty still goes missing for a moment (55 draws in a first race, against about 2,500 before); with a new car or track on a PC that has played, about one in twenty. The stand-in also draws most of the passes the game used to wait for (shadow maps, passes that read a rendered picture), so a first session waits about 0.3 seconds in all where it waited over a second.
 
 ## 19 Nov 2026
