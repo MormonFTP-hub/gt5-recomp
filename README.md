@@ -114,9 +114,14 @@ settings and writes the same file; the launcher reads it again when the game end
 - **Updates:** shows your version and the newest one with what's new, and **Update now** does the
   whole update for you in its own window (your newest Photo Mode pictures behind it, a car on the
   progress bar, **Details** for the full text) and opens the launcher again.
-- **Help:** **Save logs for a report** puts your logs on the desktop as `.txt` files GitHub accepts,
+- **Help:** **Save logs for a report** puts one report file (`GT5-report-<date>.zip`) on the desktop,
   plus the logs folder, the problem form, this FAQ and **Clear the shader cache** (also
   `ClearShaders.bat` in the install folder; see the FAQ).
+- **After a crash or a freeze** the line at the bottom says so, with **Save a report** (the same file,
+  shown in Explorer) and **Open the report page** (the problem form with your version and PC filled in:
+  drag the file into it). The report holds the parts of the logs that matter, your settings and your
+  PC's parts; your Windows user name, PC name and every folder outside the game's are taken out, and
+  there's no save data or game file in it. Nothing is sent by itself.
 
 It's built on your PC from [`launcher/GT5Launcher.cs`](launcher/GT5Launcher.cs) with the C# compiler that
 comes with Windows, every time the game is built, so it updates with the game; its picture is the logo
@@ -223,13 +228,18 @@ To play the previous build right away instead, copy `GT5\build\gt5.previous.exe`
 
 A DualSense, DualShock 4 or XInput pad works, and so does the keyboard, with a pad connected or without one.
 
-**On a pad, while you drive** (new): the right trigger is the throttle and the left the brake, both
-by how far you pull them; the bumpers shift up and down; the left stick press looks back and the right
-one works the lights. The face buttons still accelerate (✕ / A) and brake (□ / X) fully. It follows
-the buttons you set in the game's own options (with throttle on R2 there, R2 stays the throttle). At
-the menus, in replays and in the in-game menu the pad is laid out as a PS3 pad. The in-game menu's
-Controls page has **Triggers**: *As on a PS3 pad* puts everything back (R2 / L2 shift, ✕ / □ on and
-off). Every pad gets the same small round dead zone on its sticks.
+**On a pad** the buttons are the game's own, as on a PS3 pad: ✕ / A accelerates, □ / X brakes, R2 / L2
+shift (change them in the game's own options). The in-game menu's Controls page has **Triggers**:
+*Throttle and brake* makes the right trigger the throttle and the left the brake while you drive, both
+by how far you pull them, with the bumpers shifting up and down, the left stick press looking back and
+the right one working the lights; the face buttons still accelerate and brake fully, and it follows the
+buttons you set in the game's own options. At the menus, in replays and in the in-game menu the pad is
+always laid out as a PS3 pad. Every pad gets the same small round dead zone on its sticks.
+
+The game's menus show PlayStation symbols. The Controls page has **Button symbols**: *Xbox* shows
+A / B / X / Y, LB / RB, LT / RT in their place, *Keyboard* shows the keys you have bound, and
+*Automatic* follows what you used last (checked on the European 1.00 release; a release whose
+pictures differ keeps the game's own).
 
 **Keyboard**: Z = Cross, X = Circle, A = Square, S = Triangle, arrow keys = D-pad, Enter = Start, Tab = Select.
 An arrow-key tap moves one place in the menus, and in a race Left/Right steer as the D-pad does on a PS3
@@ -588,8 +598,11 @@ line in it starting with `[d3d-fail]` says what failed, and that decides the fix
 
 **Q: How do I attach my log to an issue? GitHub won't take it.**
 
-**A: Rename it first.** GitHub refuses `.err` files, so rename `GT5\logs\play.err` to `play.err.txt` (or put
-it in a `.zip`) and drag it into the issue. The installer's `GT5-Installer.log` attaches as it is. For a
+**A: Let the launcher make the file.** **Help** > **Save logs for a report** (or **Save a report** in the
+line that comes up after a crash or a freeze) puts a `.zip` on your desktop that GitHub takes, with your
+Windows user name, PC name and folders taken out; drag it into the issue. By hand: GitHub refuses `.err`
+files, so rename `GT5\logs\play.err` to `play.err.txt` (or put it in a `.zip`); it names your Windows user
+in its paths. The installer's `GT5-Installer.log` attaches as it is. For a
 graphics problem, also say the mode, the track and its time or weather (for example Arcade, Chamonix,
 snow): some problems show on one track and not another.
 
@@ -1057,7 +1070,7 @@ so the launcher's settings win. Some useful ones:
 | `PS3_KEYS=cross:W,square:Space,...` | Your own keyboard keys, `button:key` pairs (the launcher's Controls page writes it). Button and key names are under [Your own keys](#keyboard-keys). |
 | `PS3_KEYS_ARROWS=split` | Where the arrow keys go. By default (without mouse steering or a wheel) the d-pad only: a tap moves one place in the menus, and in a race GT5 eases into the steering as it does with a PS3 pad's d-pad. `split`: Left/Right push the left stick (full lock at once), Up/Down press the d-pad, as before 18 Nov. With mouse steering or a wheel the default follows the game: d-pad only at the menus, d-pad and stick in a race. `both`: always both (a menu tap moves two places). |
 | `PS3_KEYS_WITH_PAD=0` | The keyboard is off while a pad is connected (by default both work together). |
-| `PAD_TRIGGERS=ps3` | A pad's triggers as on a PS3 pad while driving too (R2 / L2), the face buttons on and off for throttle and brake. The in-game menu's **Triggers** setting writes it. By default, while the game drives a car, the right trigger feeds the pressure of the button the game accelerates with and the left trigger that of the brake button (read from the game's own button assignment, so a layout changed in its options is followed), the bumpers press its shift buttons, and what the bumpers pressed before moves to the stick presses. `PAD_TRACE=2` logs what the game reads: `[pad] the game reads throttle 50%`. |
+| `PAD_TRIGGERS=drive` | The in-game menu's **Triggers** setting writes it (*Throttle and brake*). By default a pad is as on a PS3 pad while driving too (R2 / L2 shift, the face buttons on and off for throttle and brake). With `drive`, while the game drives a car, the right trigger feeds the pressure of the button the game accelerates with and the left trigger that of the brake button (read from the game's own button assignment, so a layout changed in its options is followed), the bumpers press its shift buttons, and what the bumpers pressed before moves to the stick presses. `PAD_TRACE=2` logs what the game reads: `[pad] the game reads throttle 50%`. |
 | `PAD_STICK_DEADZONE=8` | The round dead zone in the middle of every pad's sticks, in percent (0-30; default 8). A worn stick that drifts may want 12 or 15. `old`: XInput pads 24 % on each axis, other pads none, as before 18 Nov. |
 | `PAD_MENU_ALL_PADS=0` | The in-game menu reads only the first connected controller, as before; by default it reads every pad and the wheel's buttons. |
 | `PAD_RUMBLE_GUARD=0` | The pad's motors left as the game sets them. By default they stop while the in-game menu is open, when the game stops for half a second (the quit question) and when it ends. `PAD_DS_RUMBLE=0`: a DualSense or DualShock 4 read directly doesn't rumble (it does by default over USB, and a DualShock 4 over Bluetooth). |
