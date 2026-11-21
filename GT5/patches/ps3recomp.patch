@@ -6730,16 +6730,63 @@ diff --git a/tools/find_spu_functions.py b/tools/find_spu_functions.py
  def collect_ila_continuation_targets(insns, code_start, code_end):
      """Continuation addresses materialised as plain immediates:
  
-@@ -605,7 +679,7 @@
+@@ -434,7 +508,12 @@
+     return targets
+ 
+ 
+-def collect_duff_targets(insns, code_start, code_end, window=12, span=64):
++# First operand is not a register written (branches, hints, no-ops).
++_DUFF_NO_WRITE = {"br", "bra", "brsl", "brasl", "bi", "bisl", "bisled", "biz", "binz", "bihz",
++                  "bihnz", "brz", "brnz", "brhz", "brhnz", "iret", "nop", "lnop", "sync", "dsync"}
++
++
++def collect_duff_targets(insns, code_start, code_end, window=12, span=64, span_always=False):
+     """Mid-ladder entries of a Duff's device (computed jump into an unrolled
+     loop). Sony's SPU job CRT clears BSS with one:
+ 
+@@ -463,6 +542,11 @@
+         reg = ops[0]
+         link = None
+         imm = 0
++        # Another write to the register (the ladder's `a $r8,$r8,$r4`) makes the
++        # target computed: seed the span. With only `ai`s it is exactly link+K
++        # (`brsl $rX,.+4; ai $rX,$rX,8; bid $rX`, an interrupt window), and
++        # seeding the span split the next 64 bytes into one-instruction functions.
++        computed = False
+         for j in range(idx - 1, max(-1, idx - 1 - window), -1):
+             w = insns[j]
+             wops = [t.strip() for t in w.operands.split(",") if t.strip()]
+@@ -473,6 +557,9 @@
+                 except ValueError:
+                     break
+                 continue
++            if wops and wops[0] == reg and w.mnemonic not in _DUFF_NO_WRITE \
++                    and not w.mnemonic.startswith(("st", "wrch", "hbr")):
++                computed = True
+             if w.mnemonic in ("brsl", "brasl") and wops and wops[0] == reg:
+                 try:
+                     tgt = int(wops[-1], 0)
+@@ -484,6 +571,10 @@
+         if link is None or imm <= 0:
+             continue
+         base = link + imm
++        if not computed and not span_always:   # --duff-span-always: the span every time, as before
++            if code_start <= base < code_end:
++                targets.add(base)
++            continue
+         for o in range(0, span + 4, 4):
+             t = base + o
+             if code_start <= t < code_end:
+@@ -605,7 +696,7 @@
      return min(next_start, code_end)
  
  
 -def detect_functions(buf, base_override=None, verbose=True, raw=False):
-+def detect_functions(buf, base_override=None, verbose=True, raw=False, entry=None):
++def detect_functions(buf, base_override=None, verbose=True, raw=False, entry=None, duff_span_always=False):
      if raw:
          # A raw local-store image: a SPURS job binary, which the title loads
          # from its own data files as a flat code+data blob rather than as an
-@@ -615,7 +689,7 @@
+@@ -615,7 +706,7 @@
          # spu_workload's SPU_DUMP_MISS, which is the only place these bytes
          # exist in one piece.
          base = base_override if base_override is not None else 0
@@ -6748,28 +6795,35 @@ diff --git a/tools/find_spu_functions.py b/tools/find_spu_functions.py
                                         "vaddr": base, "filesz": len(buf),
                                         "memsz": len(buf)}], "shs": []}
          text_off, text_va, text_size = 0, base, len(buf)
-@@ -656,6 +730,8 @@
+@@ -656,8 +747,10 @@
      for t in (collect_link_register_targets(insns)
                | collect_computed_branch_targets(insns)
                | collect_jump_table_targets(insns, code, code_start, code_end)
 +              | collect_bi_table_targets(insns, code, code_start, code_end)
 +              | collect_after_bi_targets(insns)
                | collect_ila_continuation_targets(insns, code_start, code_end)
-               | collect_duff_targets(insns, code_start, code_end)
+-              | collect_duff_targets(insns, code_start, code_end)
++              | collect_duff_targets(insns, code_start, code_end, span_always=duff_span_always)
                | fptr_targets):
-@@ -728,12 +804,14 @@
+         if code_start <= t < code_end and (t & 3) == 0 and t in insns_by_addr:
+             seed_starts.add(t)
+@@ -728,12 +821,18 @@
                          "from the branch analysis")
      p.add_argument("--base", type=lambda x: int(x, 0), default=None,
                     help="Override the .text base address")
 +    p.add_argument("--entry", type=lambda x: int(x, 0), default=None,
 +                   help="With --raw: the entry address, for images whose start is a header")
++    p.add_argument("--duff-span-always", action="store_true",
++                   help="Seed the 64 bytes after every PC-getter `bi` as entries, as before the "
++                        "constant-target case was told apart (keeps an older lift byte-for-byte)")
      args = p.parse_args()
  
      with open(args.input, "rb") as f:
          buf = f.read()
  
 -    funcs, (text_off, base, size) = detect_functions(buf, args.base, raw=args.raw)
-+    funcs, (text_off, base, size) = detect_functions(buf, args.base, raw=args.raw, entry=args.entry)
++    funcs, (text_off, base, size) = detect_functions(buf, args.base, raw=args.raw, entry=args.entry,
++                                                    duff_span_always=args.duff_span_always)
  
      out_obj = [{"start": s, "end": e} for s, e in funcs]
      if args.out:
@@ -9922,6 +9976,15 @@ diff --git a/tools/ppu_lifter.py b/tools/ppu_lifter.py
          lines.append("}")
          lines.append("")
          return lines
+@@ -4255,7 +4447,7 @@
+             with open(path, "r") as f:
+                 if f.read() == text:
+                     return False
+-        except OSError:
++        except (OSError, UnicodeDecodeError):   # unreadable as text here (e.g. lifted on Windows): rewrite
+             pass
+         tmp = path + ".tmp"
+         with open(tmp, "w") as f:
 @@ -4402,6 +4594,46 @@
          # blr, bctr, or `b` without link ends the run
          if v in (0x4E800020, 0x4E800420) or (v >> 26 == 18 and not v & 1):
@@ -10074,7 +10137,60 @@ diff --git a/tools/spu_lifter.py b/tools/spu_lifter.py
  from dataclasses import dataclass, field
  
  sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-@@ -494,6 +496,787 @@
+@@ -181,6 +183,13 @@
+     if m:
+         return m.group(1)
+     return "0"
++
++
++# wrch channels whose write only sets an spu_context field (spu_wrch's short switch, or the inline
++# copy of it in spu_helpers.h, SPU_CH_INLINE). Channel numbers as _chan returns them when the
++# disassembler printed no name.
++_WRCH_PARAM = {"MFC_LSA", "16", "MFC_EAH", "17", "MFC_EAL", "18", "MFC_Size", "19",
++               "MFC_TagID", "20", "MFC_WrTagMask", "22"}
+ 
+ 
+ def _chan(token: str) -> str:
+@@ -373,6 +382,38 @@
+             groups[start] = end
+         i = j
+     return groups
++
++
++def compute_pcget_branches(insns) -> dict:
++    """`brsl $rX, .+4` / `ai $rX, $rX, K` / `bi(d/e) $rX`: a PC-getter whose sum is
++    branched to at once. The target is the constant link + K -- an interrupt window
++    or a skip, never a call -- so the `bi` can be a direct branch instead of a trip
++    through spu_indirect_branch. Sony's WWS jobs open their DMA critical sections
++    this way (`bid` to the next instruction: GT5's scene traversal ran it ~1.2M
++    times a second at one site). Returns {bi addr: target}; anything with another
++    write to rX between the three (a Duff's device adds a register) is left alone."""
++    by_addr = {i.addr: i for i in insns}
++    out = {}
++    for b in insns:
++        raw = b.raw
++        if (raw >> 21) != 0x1A8:                      # bi (with or without D/E)
++            continue
++        rx = (raw >> 7) & 0x7F
++        a = by_addr.get(b.addr - 4)
++        s = by_addr.get(b.addr - 8)
++        if a is None or s is None:
++            continue
++        if (a.raw >> 24) != 0x1C or (a.raw & 0x7F) != rx or ((a.raw >> 7) & 0x7F) != rx:
++            continue                                  # ai rX, rX, K
++        k = (a.raw >> 14) & 0x3FF
++        k -= 0x400 if k & 0x200 else 0
++        if (s.raw >> 23) != 0x66 or (s.raw & 0x7F) != rx or ((s.raw >> 7) & 0xFFFF) != 1:
++            continue                                  # brsl rX, .+4
++        tgt = (s.addr + 4 + k) & 0x3FFFF
++        if tgt & 3 or tgt not in by_addr:
++            continue
++        out[b.addr] = tgt
++    return out
+ 
+ 
+ def compute_link_returns(insns, bounds) -> set:
+@@ -494,6 +535,787 @@
  
  
  
@@ -10862,10 +10978,15 @@ diff --git a/tools/spu_lifter.py b/tools/spu_lifter.py
  # lv2 stop-and-signal syscalls that resume at the next instruction (the same
  # set as find_spu_functions.LV2_RESUMING_STOPS, which decides function extents).
  LV2_RESUMING_STOPS = {0x100, 0x110, 0x111}
-@@ -529,11 +1312,66 @@
+@@ -529,11 +1351,71 @@
          # compute_link_returns(). Emitted as `return;` so they compose with the
          # brsl->C-call nesting instead of branching to an unregistered PC.
          self.link_return: set = set()
++        # compute_pcget_branches: {bi addr: constant target}, and the function
++        # starts a cross-function one may tail-call (set by main()).
++        self.pcget_bi: dict = {}
++        self.func_starts: set = set()
++        self.inline_wrch = False          # parameter channel writes without the register stores (main())
 +        # Register locals (on from the command line unless --no-reg-locals; off for
 +        # callers that build the class themselves): each function keeps the SPU
 +        # registers it touches in C locals and the local-store base in `_ls`, and
@@ -10930,7 +11051,7 @@ diff --git a/tools/spu_lifter.py b/tools/spu_lifter.py
                                start_addr=start, end_addr=end)
  
          internal: set[int] = set()
-@@ -550,6 +1388,7 @@
+@@ -550,6 +1432,7 @@
          # for its interrupt handler (DMA-list stall-and-notify) never wakes. So
          # each merged chunk entry hands back to the drain when one is pending.
          merged_starts = {a for a in getattr(self, "func_starts", ()) if start < a < end}
@@ -10938,7 +11059,7 @@ diff --git a/tools/spu_lifter.py b/tools/spu_lifter.py
          last_insn = None
          for insn in insns:
              if insn.addr < start or insn.addr >= end:
-@@ -559,7 +1398,7 @@
+@@ -559,7 +1442,7 @@
              if insn.addr in merged_starts:
                  func.body_lines.append(
                      f"    if (ctx->int_enable && (ctx->event_status & ctx->event_mask)) "
@@ -10947,7 +11068,7 @@ diff --git a/tools/spu_lifter.py b/tools/spu_lifter.py
                      f"{self.prefix}spu_func_{insn.addr:08X}; return; }}")
              c = self._translate(insn, func)
              if c:
-@@ -583,7 +1422,7 @@
+@@ -583,7 +1466,7 @@
                           and (last_insn.raw & 0x3FFF) in LV2_RESUMING_STOPS))
                  and end in getattr(self, "func_starts", set())):
              func.body_lines.append(
@@ -10956,7 +11077,7 @@ diff --git a/tools/spu_lifter.py b/tools/spu_lifter.py
  
          # Infinite no-op self-loop (the SPU `br .` halt idiom): a function whose
          # whole body is nops + an unconditional branch back into itself does
-@@ -603,8 +1442,200 @@
+@@ -603,8 +1486,200 @@
                      "    spu_halt(ctx); return;",
                  ]
  
@@ -11158,7 +11279,7 @@ diff --git a/tools/spu_lifter.py b/tools/spu_lifter.py
  
      @staticmethod
      def _branch_target(insn: SPUInstruction):
-@@ -648,6 +1679,15 @@
+@@ -648,6 +1723,15 @@
          def ra(): return _reg(ops[1])
          def rb(): return _reg(ops[2])
          def g(i): return f"ctx->gpr[{i}]"
@@ -11174,7 +11295,7 @@ diff --git a/tools/spu_lifter.py b/tools/spu_lifter.py
  
          # ---- nop / sync / stop ----
          if mn in ("nop", "lnop"):
-@@ -670,10 +1710,10 @@
+@@ -670,10 +1754,10 @@
                  # lv2 services these and resumes at the next instruction (the
                  # reply is read from the inbound mailbox right after the stop).
                  # spu_stop puts the context back to RUNNING when it serviced it.
@@ -11188,7 +11309,7 @@ diff --git a/tools/spu_lifter.py b/tools/spu_lifter.py
                      f"ctx->status = SPU_STATUS_STOPPED_BY_STOP; spu_stop(ctx); return;")
  
          # ---- immediate loaders ----
-@@ -714,14 +1754,14 @@
+@@ -714,14 +1798,14 @@
                  cond = f"(int32_t){pw(ra())} > (int32_t){pw(rb())}"
              else:  # hlgt
                  cond = f"{pw(ra())} > {pw(rb())}"
@@ -11205,7 +11326,7 @@ diff --git a/tools/spu_lifter.py b/tools/spu_lifter.py
                      "ctx->status = SPU_STATUS_STOPPED_BY_STOP; spu_stop(ctx); return;")
  
          # ---- integer arithmetic (register) ----
-@@ -857,33 +1897,64 @@
+@@ -857,33 +1941,71 @@
              return f"{g(rt())} = spu_{mn}({g(ra())}, {g(rb())}, {g(rt())});"
  
          # ---- quadword loads / stores ----
@@ -11275,11 +11396,18 @@ diff --git a/tools/spu_lifter.py b/tools/spu_lifter.py
          if mn == "wrch":
              # operands: channel, $rt
 -            return f"spu_wrch(ctx, {_chan(ops[0])}, {g(_reg(ops[1]))});"
-+            return f"{SY}spu_wrch(ctx, {_chan(ops[0])}, {g(_reg(ops[1]))});"
++            ch = _chan(ops[0])
++            # An MFC parameter write only sets a context field, and with SPU_CH_INLINE the lifted
++            # job makes that store itself (spu_wrch_inl): the registers need not be stored first.
++            # With a channel diagnostic on it is the call, which then sees the registers as they
++            # were at the last call; none of the parameter channels' diagnostics look at them.
++            if self.inline_wrch and ch in _WRCH_PARAM:
++                return f"spu_wrch(ctx, {ch}, {g(_reg(ops[1]))});"
++            return f"{SY}spu_wrch(ctx, {ch}, {g(_reg(ops[1]))});"
  
          # ---- branches ----
          if mn in ("br", "bra"):
-@@ -893,7 +1964,7 @@
+@@ -893,7 +2015,7 @@
              # `goto loc_self` busy-spins the host thread forever; stop the SPU
              # instead (same halt path the lifter emits for a `stop` instruction).
              if tgt == addr:
@@ -11288,7 +11416,7 @@ diff --git a/tools/spu_lifter.py b/tools/spu_lifter.py
              return self._uncond_branch(tgt, func)
          if mn in ("brsl", "brasl"):
              # The disassembler drops the link register from brsl operands, so
-@@ -910,7 +1981,7 @@
+@@ -910,7 +2032,7 @@
              # boot in cri_audio_00023C58). Set the link, then stop the SPU (same
              # halt path the lifter emits for a `stop` instruction).
              if tgt == addr:
@@ -11297,7 +11425,7 @@ diff --git a/tools/spu_lifter.py b/tools/spu_lifter.py
              # PC-GETTER IDIOM: `brsl rX, .+4` (target == next instruction) just
              # loads PC+4 into rX for PC-relative addressing / computed jump tables;
              # it is NOT a real call. Emitting a host call here imbalances the C
-@@ -927,9 +1998,9 @@
+@@ -927,9 +2049,9 @@
                  # `bi $r0` returns via host return) + SPU_DRAIN (drains the
                  # callee's own tail-chains so they don't grow the caller frame)
                  # + image save/restore (adopt-on-serve cannot leak upward).
@@ -11310,7 +11438,7 @@ diff --git a/tools/spu_lifter.py b/tools/spu_lifter.py
              return f"{link} /* TODO spu: brsl unresolved target */;"
          if mn in _COND_BR:
              tgt = self._branch_target(insn)
-@@ -943,7 +2014,7 @@
+@@ -943,7 +2065,7 @@
              # Cross-function conditional branch = conditional tail: a direct
              # tail call when the drain has nothing to do on this step, else
              # the trampoline and unwind (SPU_DIRECT, spu_context.h).
@@ -11319,7 +11447,19 @@ diff --git a/tools/spu_lifter.py b/tools/spu_lifter.py
                      f"{self.prefix}spu_func_{tgt:08X}); }}")
          # Interrupt enable/disable bits on the bi family (bie/bid, irete/iretd,
          # bisle(d)...): bit 0x40000 = E (enable), 0x80000 = D (disable), taking
-@@ -969,14 +2040,14 @@
+@@ -955,6 +2077,11 @@
+         # For bi/bisl the disassembler emits only "$rA" (ops[0] = target reg).
+         if mn in ("bi",):
+             tgt_reg = _reg(ops[0])
++            # PC-getter + constant (compute_pcget_branches): a direct branch, with
++            # the D/E bit applied first; the target's own interrupt check follows.
++            pt = self.pcget_bi.get(addr)
++            if pt is not None and (func.start_addr <= pt < func.end_addr or pt in self.func_starts):
++                return f"{_ied}{self._uncond_branch(pt, func)}"
+             # SPU ABI: $r0 is the link register. `bi $r0` is the standard
+             # function return — translate to a host return so call/return
+             # discipline matches the C function nesting from brsl. EXCEPTION:
+@@ -969,14 +2096,14 @@
                  # publish THAT register as the return PC: SPU_RET publishes r0,
                  # and spu_drain_call restarts dispatch when pc != return_pc.
                  if tgt_reg != "0":
@@ -11338,7 +11478,7 @@ diff --git a/tools/spu_lifter.py b/tools/spu_lifter.py
                      "g_spu_trampoline_fn = spu_indirect_branch; return;")
          if mn in ("bisl",):
              # `bisl rt, ra`: rt = link, ra = TARGET. The disassembler emits BOTH
-@@ -992,10 +2063,10 @@
+@@ -992,10 +2119,10 @@
              # here and its `bi $r0` returns via host return.
              # read the target BEFORE writing the link: rt may be the same register as ra
              return (f"{{ uint32_t _tg = {g(tgt_reg)}._u32[0]; {g(link_rt)} = spu_link(0x{(addr + 4) & 0x3FFFC:X}); "
@@ -11351,7 +11491,7 @@ diff --git a/tools/spu_lifter.py b/tools/spu_lifter.py
          # bisled: set link, branch to RA only if an external event is pending.
          if mn in ("bisled",):
              link_rt = insn.raw & 0x7F            # rt = link
-@@ -1003,7 +2074,7 @@
+@@ -1003,7 +2130,7 @@
              # read the target before writing the link: rt may alias ra
              return (f"{{ uint32_t _tg = {g(tgt_reg)}._u32[0]; {g(link_rt)} = spu_link(0x{(addr + 4) & 0x3FFFC:X}); "
                      f"if ((ctx->event_status & ctx->event_mask) != 0) {{ "
@@ -11360,7 +11500,7 @@ diff --git a/tools/spu_lifter.py b/tools/spu_lifter.py
                      f"g_spu_trampoline_fn = spu_indirect_branch; return; }} }}")
          # biz/binz/bihz/bihnz: ops[0] = condition reg, ops[1] = target reg.
          if mn in ("biz", "binz", "bihz", "bihnz"):
-@@ -1017,9 +2088,9 @@
+@@ -1017,9 +2144,9 @@
              if (tgt_reg == "0" and addr not in self.bi_r0_jump) \
                      or addr in self.link_return:
                  if tgt_reg != "0":
@@ -11373,7 +11513,7 @@ diff --git a/tools/spu_lifter.py b/tools/spu_lifter.py
                      f"g_spu_trampoline_fn = spu_indirect_branch; return; }}")
  
          # hint-for-branch: pure performance hint, safe to drop
-@@ -1035,6 +2106,13 @@
+@@ -1035,6 +2162,13 @@
                  f'spu_unsupported(0x{insn.addr:X}, "{mn}");')
  
      # ------------------------------------------------------------------ #
@@ -11387,7 +11527,7 @@ diff --git a/tools/spu_lifter.py b/tools/spu_lifter.py
      def _cond(self, mn: str, reg: str) -> str:
          """Condition expression on preferred slot for conditional branches."""
          word = f"ctx->gpr[{reg}]._u32[0]"
-@@ -1057,17 +2135,25 @@
+@@ -1057,17 +2191,25 @@
          # drain has nothing to do on this step, else hand the target to the
          # trampoline and unwind so the enclosing SPU_DRAIN re-enters (no
          # host-stack growth either way; SPU_DIRECT, spu_context.h).
@@ -11414,7 +11554,7 @@ diff --git a/tools/spu_lifter.py b/tools/spu_lifter.py
          lines.append("")
          lines.append("/* Runtime glue (runtime/spu/spu_channels.c) */")
          lines.append("void spu_register_function(uint32_t addr, void (*fn)(spu_context*));")
-@@ -1080,11 +2166,15 @@
+@@ -1080,11 +2222,15 @@
      def emit_source(self,header_name: str) -> str:
          lines = [SOURCE_PREAMBLE.format(header_name=header_name), ""]
          weak = "__attribute__((weak)) " if getattr(self, "weak_emit", False) else ""
@@ -11432,7 +11572,7 @@ diff --git a/tools/spu_lifter.py b/tools/spu_lifter.py
              lines.append("")
  
          # Stubs for cross-function branch/call targets the function-boundary
-@@ -1100,10 +2190,14 @@
+@@ -1100,10 +2246,14 @@
              lines.append(" * function detector did not seed (typically conditional")
              lines.append(" * branches that escape a function's range). */")
              for t in externs:
@@ -11448,13 +11588,19 @@ diff --git a/tools/spu_lifter.py b/tools/spu_lifter.py
              lines.append("")
  
          lines.append("/* Function table */")
-@@ -1188,6 +2282,42 @@
+@@ -1188,6 +2338,48 @@
                          "changes speed, not which code can be reached.")
      p.add_argument("--max-group-insns", type=int, default=4000,
                     help="Cap on instructions per merged group (keeps clang fast).")
 +    p.add_argument("--no-loop-head-loads", action="store_true",
 +                   help="With register locals, a loop head holds only the registers held on every "
 +                        "way in (the old output) instead of every register its loop uses.")
++    p.add_argument("--no-inline-wrch", action="store_true",
++                   help="Store the registers before every write to an MFC parameter channel (LSA, "
++                        "EAH, EAL, Size, TagID, WrTagMask), as before, instead of only before the others.")
++    p.add_argument("--no-pcget-direct", action="store_true",
++                   help="Lift `brsl $rX,.+4; ai $rX,$rX,K; bi $rX` through the indirect-branch "
++                        "dispatcher as before, instead of as a direct branch to link+K.")
 +    p.add_argument("--no-insert-peephole", action="store_true",
 +                   help="Lift every shufb as a general shuffle, also where its control is an "
 +                        "insertion control (cbd/chd/cwd/cdd or the x forms) from the same block.")
@@ -11491,7 +11637,7 @@ diff --git a/tools/spu_lifter.py b/tools/spu_lifter.py
      p.add_argument("--force-indirect", default="",
                     help="Comma-separated `bi $rN` addresses to emit as GENERIC "
                          "indirect dispatch, overriding the link-register-return "
-@@ -1311,6 +2441,16 @@
+@@ -1311,12 +2503,26 @@
      insns = disassemble_spu(data, base)
  
      lifter = SPULifter(trace=args.trace, prefix=args.symbol_prefix)
@@ -11508,7 +11654,17 @@ diff --git a/tools/spu_lifter.py b/tools/spu_lifter.py
      lifter.bi_r0_jump = compute_bi_r0_jumps(insns, bounds)
      if lifter.bi_r0_jump:
          print(f"  {len(lifter.bi_r0_jump)} `bi $r0` computed-jump site(s) "
-@@ -1341,8 +2481,40 @@
+               f"(r0 set by lqa/lqr/il/ila, not a link): "
+               f"{', '.join(f'0x{a:X}' for a in sorted(lifter.bi_r0_jump))}")
+     lifter.link_return = compute_link_returns(insns, bounds)
++    lifter.inline_wrch = not (args.no_inline_wrch or args.trace)
++    if not args.no_pcget_direct:
++        lifter.pcget_bi = compute_pcget_branches(insns)
++        lifter.func_starts = {s for (s, _e) in bounds}
+     if args.force_indirect:
+         forced = {int(x, 0) for x in args.force_indirect.split(",") if x.strip()}
+         dropped = lifter.link_return & forced
+@@ -1341,8 +2547,40 @@
                                      entry_points=seeds)
          print(f"  {len(groups)} merged function group(s) "
                f"(--merge-chunks, max {args.max_group_insns} insns)")
@@ -11550,7 +11706,7 @@ diff --git a/tools/spu_lifter.py b/tools/spu_lifter.py
  
      os.makedirs(args.output, exist_ok=True)
      hp = os.path.join(args.output, args.header_name)
-@@ -1363,6 +2535,8 @@
+@@ -1363,6 +2601,8 @@
      print(f"Wrote {sp}")
      print(f"  {len(lifter.functions)} function(s) lifted")
      print(f"  {len(lifter.call_targets)} call target(s)")
@@ -19311,7 +19467,7 @@ diff --git a/runtime/syscalls/sys_ppu_thread.c b/runtime/syscalls/sys_ppu_thread
 diff --git a/runtime/spu/spu_channels.c b/runtime/spu/spu_channels.c
 --- a/runtime/spu/spu_channels.c
 +++ b/runtime/spu/spu_channels.c
-@@ -1,3319 +1,4285 @@
+@@ -1,3319 +1,4330 @@
 -/*
 - * ps3recomp - SPU channel + indirect-branch runtime glue
 - *
@@ -26105,6 +26261,49 @@ diff --git a/runtime/spu/spu_channels.c b/runtime/spu/spu_channels.c
 +    return done;
 +}
 +
++/* SPU_IB_HIST=1: every 5 s, the indirect-branch targets that reached this full resolver most often
++ * (image, LS address, count), to find which guest code pays for dispatch. */
++static void spu_ib_hist(const spu_context* ctx)
++{
++    enum { N = 4096 };
++    static struct { volatile uint32_t key; volatile uint32_t n; } tab[N];
++    static volatile unsigned long long total, t0_ms;
++    const uint32_t key = ((uint32_t)(ctx->image_id & 0xFFF) << 20) | (ctx->pc & SPU_LS_MASK) | 1u;
++    uint32_t h = (key * 0x9E3779B1u) >> 20;
++    for (int probe = 0; probe < 16; probe++, h = (h + 1) & (N - 1)) {
++        uint32_t k = __atomic_load_n(&tab[h].key, __ATOMIC_RELAXED);
++        if (!k && __atomic_compare_exchange_n(&tab[h].key, &k, key, 0, __ATOMIC_RELAXED, __ATOMIC_RELAXED)) k = key;
++        if (k == key) { __atomic_fetch_add(&tab[h].n, 1, __ATOMIC_RELAXED); break; }
++    }
++    const unsigned long long t = __atomic_add_fetch(&total, 1, __ATOMIC_RELAXED);
++    if ((t & 0xFFFF) == 0) {
++#ifdef _WIN32
++        const unsigned long long now = GetTickCount64();
++#else
++        struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts);
++        const unsigned long long now = (unsigned long long)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
++#endif
++        unsigned long long t0 = __atomic_load_n(&t0_ms, __ATOMIC_RELAXED);
++        if (!t0) { __atomic_store_n(&t0_ms, now, __ATOMIC_RELAXED); return; }
++        if (now - t0 < 5000 || !__atomic_compare_exchange_n(&t0_ms, &t0, now, 0, __ATOMIC_RELAXED, __ATOMIC_RELAXED)) return;
++        uint32_t best[24] = {0}, bn[24] = {0};
++        unsigned long long sum = 0;
++        for (int i = 0; i < N; i++) {
++            const uint32_t n = __atomic_exchange_n(&tab[i].n, 0, __ATOMIC_RELAXED);
++            sum += n;
++            for (int j = 0; j < 24; j++)
++                if (n > bn[j]) {
++                    for (int m = 23; m > j; m--) { bn[m] = bn[m - 1]; best[m] = best[m - 1]; }
++                    bn[j] = n; best[j] = tab[i].key; break;
++                }
++        }
++        fprintf(stderr, "[ib-hist] %llu indirect branches/s through the full resolver; top:", sum * 1000 / (now - t0));
++        for (int j = 0; j < 24 && bn[j]; j++)
++            fprintf(stderr, " img%u:%05X=%u", best[j] >> 20, (best[j] & SPU_LS_MASK) & ~1u, (unsigned)(bn[j] * 1000ull / (now - t0)));
++        fputc(10, stderr);
++    }
++}
++
 +/* The whole dispatcher. spu_indirect_branch (below) takes the plain case
 + * itself and hands everything else here. */
 +#if defined(_MSC_VER) && !defined(__clang__)
@@ -26120,6 +26319,8 @@ diff --git a/runtime/spu/spu_channels.c b/runtime/spu/spu_channels.c
 +     * and falls into branch-to-0. All lifted funcs live below SPU_LS_SIZE, so
 +     * masking is a no-op for already-valid targets. */
 +    ctx->pc &= SPU_LS_MASK;
++    { static int s_h = -1; if (s_h < 0) s_h = getenv("SPU_IB_HIST") ? 1 : 0;
++      if (__builtin_expect(s_h, 0)) { spu_ib_hist(ctx); } }
 +    /* Interrupt-return register restore (see spu_drain.c spu_irq_regs_save):
 +     * the WWS handler's save/restore shim lives at unlifted top-of-LS, so we
 +     * enforce the preserve-all-registers hardware contract here -- the first
@@ -29525,7 +29726,7 @@ new file mode 100644
 diff --git a/libs/video/rsx_draw_engine.c b/libs/video/rsx_draw_engine.c
 --- a/libs/video/rsx_draw_engine.c
 +++ b/libs/video/rsx_draw_engine.c
-@@ -18,11 +18,13 @@
+@@ -18,11 +18,20 @@
  #include "rsx_vertex_formats.h"
  #include "rsx_vp_decompiler.h"
  
@@ -29534,12 +29735,19 @@ diff --git a/libs/video/rsx_draw_engine.c b/libs/video/rsx_draw_engine.c
  #include <stdlib.h>
  #include <string.h>
  #include <time.h>
++#if defined(__SSSE3__) || defined(__AVX2__)
++#include <immintrin.h>   /* dc_push_index_run */
++#endif
  #include "ps3emu/log_first.h"
 +#include "gt5_settings.h"   /* watch mode, followed while the game runs (w_frame_boundary) */
++/* PS3_AB_WHAT=drawfast alternates three per-draw savings at once (tests; read once a frame in
++ * w_frame_boundary): the vertex cache's compact tag probe, texture change checks by page write
++ * tracking, and the SIMD 16-bit index gather. 1 (on) unless that A/B turns it off. */
++static int s_drawfast = 1;
  
  /* Guest memory and the RSX offset resolvers, declared the way every backend
   * that reads guest data declares them (rsx_vertex_fetch.h). */
-@@ -106,10 +108,31 @@
+@@ -106,10 +115,31 @@
      rsx_be_format fmt;
      u32 handle;
      u32 feedback;          /* last immutable own-target copy, engine-owned */
@@ -29571,7 +29779,7 @@ diff --git a/libs/video/rsx_draw_engine.c b/libs/video/rsx_draw_engine.c
  
  typedef struct {
      u32 location, offset;
-@@ -130,8 +153,37 @@
+@@ -130,8 +160,37 @@
      u32 last_use;          /* g.frames when last bound or sampled             */
      u32 ext_w, ext_h;      /* the largest clip it was bound with: past it,
                              * nothing was drawn or cleared (eng_clear_rect) */
@@ -29609,7 +29817,16 @@ diff --git a/libs/video/rsx_draw_engine.c b/libs/video/rsx_draw_engine.c
  
  typedef struct {
      u32 location, offset, format, width, height, pitch, remap, cubemap;
-@@ -151,6 +203,7 @@
+@@ -144,6 +203,8 @@
+     u32 depth;                  /* slices of a 3D texture, else 1 */
+     u32 levels;                 /* SET_TEXTURE_FORMAT mipmap count it was built with */
+     int rewritten;              /* guest bytes rewritten by the engine itself */
++    u32 ww_gen;                 /* page-write generation its hashes were last valid at (0: unknown) */
++    u32 ww_dirty;               /* checks in a row that found its pages written */
+ 
+ } eng_texture;
+ 
+@@ -151,6 +212,7 @@
      u64 key;
      u32 handle;
      u8 fixed;
@@ -29617,7 +29834,7 @@ diff --git a/libs/video/rsx_draw_engine.c b/libs/video/rsx_draw_engine.c
      u16 tex_used;           /* units the pixel program samples */
      u64 fp_hash;            /* eng_fp_debug_hash of the guest fragment program */
  } eng_pipeline;
-@@ -192,6 +245,14 @@
+@@ -192,6 +254,14 @@
      eng_vp_memo vp_memo[ENG_VP_MEMO];
      u32 vp_memo_next;
      eng_display_buffer display_buffers[8];
@@ -29632,7 +29849,7 @@ diff --git a/libs/video/rsx_draw_engine.c b/libs/video/rsx_draw_engine.c
  
      u32 frames;
      u64 texture_use_serial;
-@@ -199,6 +260,7 @@
+@@ -199,6 +269,7 @@
      u32 last_guest_draws;
      u32 last_present_surface;
      u32 last_flip_buffer;
@@ -29640,7 +29857,7 @@ diff --git a/libs/video/rsx_draw_engine.c b/libs/video/rsx_draw_engine.c
      u64 write_serial;       /* orders colour and depth writes to one address */
  
      /* staging: decoded texture levels, the constant blocks, the index list */
-@@ -253,6 +315,256 @@
+@@ -253,6 +324,256 @@
      u32 inline_dropped_at_begin;
  } dc;
  
@@ -29897,7 +30114,7 @@ diff --git a/libs/video/rsx_draw_engine.c b/libs/video/rsx_draw_engine.c
  /* ---- guest memory -------------------------------------------------------- */
  
  /* rsx_dsp_* locations are RSX_LOCATION_LOCAL = 0 / _MAIN = 1;
-@@ -312,6 +624,36 @@
+@@ -312,6 +633,36 @@
      return (u32)((key ^ (key >> 29)) * 0x9E3779B97F4A7C15ull >> 40) & (ENG_PIPELINE_INDEX - 1u);
  }
  
@@ -29934,7 +30151,7 @@ diff --git a/libs/video/rsx_draw_engine.c b/libs/video/rsx_draw_engine.c
  /* ---- render state -------------------------------------------------------- */
  
  void rsx_draw_engine_decode_render_state(const rsx_dispatch* rsx,
-@@ -324,6 +666,23 @@
+@@ -324,6 +675,23 @@
      rsx_dsp_surface sf;
      rsx_dsp_get_surface(rsx, &sf);
      rs->alpha_ref_format = sf.color_format;
@@ -29958,7 +30175,7 @@ diff --git a/libs/video/rsx_draw_engine.c b/libs/video/rsx_draw_engine.c
      rs->rt_fp16 = sf.color_format == RSX_SURFACE_FMT_F_W16Z16Y16X16;
      rs->blend_enable = rsx_dsp_reg(rsx, M_BLEND_ENABLE) & 1;
      const u32 sfac = rsx_dsp_reg(rsx, M_BLEND_SFACTOR);
-@@ -646,8 +1005,43 @@
+@@ -646,8 +1014,43 @@
   * sample resolution, so the same memory declared without antialiasing is a
   * different layout, and drawing it into the larger target would squeeze the
   * frame into its left part. */
@@ -30003,7 +30220,7 @@ diff --git a/libs/video/rsx_draw_engine.c b/libs/video/rsx_draw_engine.c
  {
      if (!want_w) want_w = g.width;
      if (!want_h) want_h = g.height;
-@@ -663,6 +1057,15 @@
+@@ -663,6 +1066,15 @@
                  g.surfaces[i].last_use = g.frames;
                  return i;
              }
@@ -30019,7 +30236,7 @@ diff --git a/libs/video/rsx_draw_engine.c b/libs/video/rsx_draw_engine.c
              slot = i;
              break;
          }
-@@ -692,17 +1095,39 @@
+@@ -692,17 +1104,39 @@
      u32 seed_row = 0;
      const void* seed = eng_surface_seed(location, offset, want_w, want_h,
                                          want_fmt, &seed_row);
@@ -30061,7 +30278,7 @@ diff --git a/libs/video/rsx_draw_engine.c b/libs/video/rsx_draw_engine.c
      s->color_serial = 0;
      s->guest_dirty = 0;
      s->last_use = g.frames;
-@@ -720,7 +1145,9 @@
+@@ -720,7 +1154,9 @@
   * vtable path's target_for binds by. Resolution stops at the first member
   * that cannot be created, as that path stops at the first gap. Returns how
   * many were resolved, or 0. */
@@ -30072,7 +30289,7 @@ diff --git a/libs/video/rsx_draw_engine.c b/libs/video/rsx_draw_engine.c
  {
      rsx_dsp_surface sf;
      rsx_dsp_get_surface(&g.rsx, &sf);
-@@ -729,9 +1156,16 @@
+@@ -729,9 +1165,16 @@
      const u32 sel = (sf.color_target == CELL_GCM_SURFACE_TARGET_1) ? 1u : 0u;
      const rsx_be_format fmt = eng_surface_format(sf.color_format);
      const u32 aa_grid = sf.aa_sx | (sf.aa_sy << 8);
@@ -30090,7 +30307,7 @@ diff --git a/libs/video/rsx_draw_engine.c b/libs/video/rsx_draw_engine.c
      g.surfaces[first].pitch = sf.color_pitch[sel];
      slots[0] = first;
      u32 n = 1;
-@@ -747,7 +1181,7 @@
+@@ -747,7 +1190,7 @@
          const u32 slot = eng_surface_get(sf.color_location[i + 1],
                                           sf.color_offset[i + 1],
                                           g.surfaces[first].w, g.surfaces[first].h, fmt,
@@ -30099,7 +30316,7 @@ diff --git a/libs/video/rsx_draw_engine.c b/libs/video/rsx_draw_engine.c
          if (slot == ENG_INVALID) break;
          g.surfaces[slot].pitch = sf.color_pitch[i + 1];
          /* A set naming one buffer twice would attach the same target twice,
-@@ -755,9 +1189,16 @@
+@@ -755,9 +1198,16 @@
          int seen = 0;
          for (u32 k = 0; k < n; k++) if (slots[k] == slot) seen = 1;
          if (seen) break;
@@ -30116,7 +30333,7 @@ diff --git a/libs/video/rsx_draw_engine.c b/libs/video/rsx_draw_engine.c
  }
  
  /* ---- coherence with guest memory around 2D transfers ------------------- */
-@@ -856,6 +1297,160 @@
+@@ -856,6 +1306,158 @@
      }
  }
  
@@ -30196,11 +30413,9 @@ diff --git a/libs/video/rsx_draw_engine.c b/libs/video/rsx_draw_engine.c
 +static int eng_rb_async_on(void)
 +{
 +    static int on = -1;
-+#ifdef _WIN32
-+    if (on < 0) { const char* e = getenv("VK_RB_ASYNC"); on = !e || atoi(e) != 0; }   /* =0 off */
-+#else
-+    if (on < 0) { const char* e = getenv("VK_RB_ASYNC"); on = e && atoi(e) != 0; }
-+#endif
++    /* =0 off. On by default on Linux too: on the Steam Deck the waits it saves were ~24 ms of each
++     * race frame (+14% on the grid, exposure unchanged in play). */
++    if (on < 0) { const char* e = getenv("VK_RB_ASYNC"); on = !e || atoi(e) != 0; }
 +    if (!on) return 0;
 +    extern int ps3_ab_on(const char* what);
 +    return ps3_ab_on("vkrb") != 0;
@@ -30277,7 +30492,7 @@ diff --git a/libs/video/rsx_draw_engine.c b/libs/video/rsx_draw_engine.c
  void rsx_draw_engine_guest_read(u32 location, u32 offset, u32 pitch, u32 w, u32 h)
  {
      if (!g.ready || !g.be->readback || !pitch || !w || !h) return;
-@@ -868,6 +1463,21 @@
+@@ -868,6 +1470,21 @@
          return;
      }
      const eng_surface* s = &g.surfaces[slot];
@@ -30299,7 +30514,7 @@ diff --git a/libs/video/rsx_draw_engine.c b/libs/video/rsx_draw_engine.c
      const u32 bpp = eng_transfer_bpp(s->fmt);
      /* The transfer counts 32-bit pixels, so w * 4 bytes per row; an FP16
       * surface pixel is two of them. Read back every surface pixel those bytes
-@@ -877,14 +1487,50 @@
+@@ -877,14 +1494,50 @@
      if (y + h > s->h) h = s->h - y;
      const u32 x = xb / bpp, skip = xb % bpp;
      const u32 n = (skip + bytes + bpp - 1u) / bpp;
@@ -30355,7 +30570,7 @@ diff --git a/libs/video/rsx_draw_engine.c b/libs/video/rsx_draw_engine.c
      const int rgba = rsx_texture_argb_is_rgba();
      for (u32 r = 0; r < h; r++) {
          u8* dst = (u8*)eng_guest_ptr(NULL, location, offset + r * pitch, bytes);
-@@ -903,6 +1549,8 @@
+@@ -903,6 +1556,8 @@
      }
  }
  
@@ -30364,7 +30579,7 @@ diff --git a/libs/video/rsx_draw_engine.c b/libs/video/rsx_draw_engine.c
  void rsx_draw_engine_guest_wrote(u32 location, u32 offset, u32 pitch, u32 w, u32 h)
  {
      if (!g.ready || !g.be->color_target_write || !pitch || !w || !h) return;
-@@ -919,6 +1567,7 @@
+@@ -919,6 +1574,7 @@
      const eng_surface* s = &g.surfaces[slot];
      if (x + w > s->w) w = s->w - x;
      if (y + h > s->h) h = s->h - y;
@@ -30372,7 +30587,7 @@ diff --git a/libs/video/rsx_draw_engine.c b/libs/video/rsx_draw_engine.c
      u8* rows = eng_coherence_buffer(w * 4u * h);
      if (!rows) return;
      const int rgba = rsx_texture_argb_is_rgba();
-@@ -931,6 +1580,19 @@
+@@ -931,6 +1587,19 @@
          fprintf(stderr, "[rsx engine] guest_wrote %u:0x%08X %ux%u -> surface 0x%08X at %u,%u:"
                          " %u non-zero pixels\n", location, offset, w, h, s->offset, x, y,
                  eng_nonzero_pixels(rows, w * h, 4u));
@@ -30392,7 +30607,7 @@ diff --git a/libs/video/rsx_draw_engine.c b/libs/video/rsx_draw_engine.c
      g.be->color_target_write(g.be->user, s->handle, x, y, w, h, rows, w * 4u);
  }
  
-@@ -953,7 +1615,8 @@
+@@ -953,7 +1622,8 @@
      if (rt_h > z->ext_h) z->ext_h = rt_h < z->h ? rt_h : z->h;
  }
  
@@ -30402,7 +30617,7 @@ diff --git a/libs/video/rsx_draw_engine.c b/libs/video/rsx_draw_engine.c
  {
      /* The attachment must cover the whole canvas: an early pass declaring a
       * smaller clip than the live viewport otherwise gets a target the host
-@@ -962,11 +1625,20 @@
+@@ -962,11 +1632,20 @@
      u32 want_h = rt_h > g.height ? rt_h : g.height;
      if (want_w > ENG_MAX_SURFACE_DIM || want_h > ENG_MAX_SURFACE_DIM)
          return ENG_INVALID;
@@ -30424,7 +30639,7 @@ diff --git a/libs/video/rsx_draw_engine.c b/libs/video/rsx_draw_engine.c
              if (z->w >= want_w && z->h >= want_h) {
                  z->last_use = g.frames;
                  eng_zdepth_extend(z, rt_w, rt_h);
-@@ -979,6 +1651,9 @@
+@@ -979,6 +1658,9 @@
          }
      }
      int evicted = 0;
@@ -30434,7 +30649,7 @@ diff --git a/libs/video/rsx_draw_engine.c b/libs/video/rsx_draw_engine.c
      if (slot == ENG_MAX_ZDEPTHS) {
          if (g.n_zdepths < ENG_MAX_ZDEPTHS) {
              slot = g.n_zdepths;
-@@ -990,11 +1665,18 @@
+@@ -990,11 +1672,18 @@
          }
      }
  
@@ -30455,7 +30670,7 @@ diff --git a/libs/video/rsx_draw_engine.c b/libs/video/rsx_draw_engine.c
      /* The old size's snapshot goes with it: it can never be valid again. */
      if (z->snapshot && g.be->texture_release) g.be->texture_release(g.be->user, z->snapshot);
      if (z->handle) g.be->depth_target_release(g.be->user, z->handle);
-@@ -1012,7 +1694,13 @@
+@@ -1012,7 +1701,13 @@
      z->guest_dirty = 0;
      z->last_use = g.frames;
      z->ext_w = z->ext_h = 0;
@@ -30469,7 +30684,7 @@ diff --git a/libs/video/rsx_draw_engine.c b/libs/video/rsx_draw_engine.c
  
      if (slot == g.n_zdepths) g.n_zdepths++;
      return slot;
-@@ -1038,7 +1726,8 @@
+@@ -1038,7 +1733,8 @@
      if (z->snapshot_valid && z->snapshot && z->snap_w == w && z->snap_h == h)
          return z->snapshot;
      if (!g.be->depth_snapshot) return 0;
@@ -30479,7 +30694,7 @@ diff --git a/libs/video/rsx_draw_engine.c b/libs/video/rsx_draw_engine.c
      if (!tex) return 0;
      /* The stale copy goes. A depth clear invalidates the snapshot and the
       * next read takes a new one, so a shadow map cleared and read every frame
-@@ -1087,15 +1776,18 @@
+@@ -1087,15 +1783,18 @@
          !z->handle || !(bytes || d16) || !(t->format & RSX_TEX_FMT_LINEAR) ||
          t->cubemap || t->dimension == 3 || t->mipmaps > 1)
          return 0;
@@ -30503,17 +30718,64 @@ diff --git a/libs/video/rsx_draw_engine.c b/libs/video/rsx_draw_engine.c
          if (!tex) return 0;
          if (z->conv) g.be->texture_release(g.be->user, z->conv);
          z->conv = tex;
-@@ -1376,7 +2068,9 @@
+@@ -1322,6 +2021,11 @@
+  * cache full evicts the least recently used entry rather than returning
+  * nothing: returning white "made the recovered orphanage render as flat
+  * green/black geometry" (rsx_live_draw.c:2326-2334). */
++/* Page write tracking (the VK_VCACHE block below): 1 when none of [lo, hi)'s pages was written
++ * after generation `gen`, 0 when one was, -1 when it can't tell. eng_ww_gen is the generation now. */
++static int eng_ww_clean_since(const u8* lo, const u8* hi, u32 gen);
++static u32 eng_ww_gen(void);
++
+ static u32 eng_texture_slot(u32 location, u32 offset, u32 fmt, u32 w, u32 h,
+                             u32 levels, u32 pitch, int cube, u32 remap, u32 depth)
+ {
+@@ -1357,13 +2061,28 @@
+ #undef ENG_TEXTURE_KEY_MATCHES
+     if (hit) {
+         eng_texture* e = hit;
++        /* With page write tracking, a texture none of whose pages was written since its hashes were
++         * last right needs no hash at all: the sparse check and the every-8-frames full hash read
++         * hundreds of MB a second in a race (40% of sink_bind_textures on the Deck). One that keeps
++         * changing (4 checks in a row) goes back to hashing, so its writer stops taking the page
++         * faults that re-protecting its pages costs. Pages seen written get the full hash at once (the
++         * sparse one could miss a small write); tracking starts again only from a full hash that
++         * matches what was uploaded. */
++        int ww_force_full = 0;
++        if (s_drawfast && e->handle && e->last_hash_frame != g.frames && !e->rewritten && e->ww_gen && e->ww_dirty < 4) {
++            const u8* src = eng_guest_ptr(NULL, location, offset, span);
++            const int c = src ? eng_ww_clean_since(src, src + span, e->ww_gen) : -1;
++            if (c > 0) { e->last_hash_frame = g.frames; e->ww_dirty = 0; }
++            else { e->ww_gen = 0; if (c == 0) { e->ww_dirty++; ww_force_full = 1; } }
++        }
+         if (e->handle && e->last_hash_frame != g.frames) {
++            const u32 ww_before = eng_ww_gen();   /* read before hashing: a write during it counts as after */
+             /* Every cached texture used to be hashed in full every frame;
+              * in a big scene that is hundreds of MB a second for the few
+              * that change. Now the sparse check every frame, and the full
+              * hash when it differs, when this entry's turn has come, for a
+              * small texture, or after a write the engine saw. */
+-            int readable = 0;
++            int readable = 0, full = 0;
+             u64 hash = e->content_hash;
+             const u64 sparse = eng_texture_sparse_hash(location, offset, span,
+                                                        &readable);
+@@ -1374,10 +2093,13 @@
+             if (e->rewritten && readable) {
+                 hash = ~e->content_hash;
                  e->rewritten = 0;
-             } else if (readable && (sparse != e->sparse_hash ||
+-            } else if (readable && (sparse != e->sparse_hash ||
++            } else if (readable && (sparse != e->sparse_hash || ww_force_full ||
                               eng_texture_full_rehash(span, e->last_full_frame))) {
 +                const u64 th = eng_hitch_now();
                  hash = eng_texture_content_hash(location, offset, span, &readable);
 +                eng_hitch_add(ENG_HX_HASH, th);
                  e->last_full_frame = g.frames;
++                full = readable;
              }
              if (readable) e->sparse_hash = sparse;
-@@ -1388,8 +2082,10 @@
+             e->last_hash_frame = g.frames;
+@@ -1388,14 +2110,21 @@
                   * and the levels to upload would not all exist). */
                  const u32 into = (g.be->texture_upload_ordered && depth <= 1 &&
                                    e->levels == levels) ? e->handle : 0u;
@@ -30524,7 +30786,18 @@ diff --git a/libs/video/rsx_draw_engine.c b/libs/video/rsx_draw_engine.c
                  if (fresh && !into) {
                      g.be->texture_release(g.be->user, e->handle);
                      e->handle = fresh;
-@@ -1422,11 +2118,13 @@
+                     e->levels = levels;
+                 }
+                 if (fresh) e->content_hash = hash;
++            }
++            if (s_drawfast && full && hash == e->content_hash && e->ww_dirty < 4) {
++                /* Track from here: harvest now, so later checks see only newer writes. */
++                const u8* src = eng_guest_ptr(NULL, location, offset, span);
++                if (src && eng_ww_clean_since(src, src + span, ~0u) >= 0) e->ww_gen = ww_before ? ww_before : 1;
+             }
+         }
+         e->last_use_serial = ++g.texture_use_serial;
+@@ -1422,11 +2151,13 @@
      e.last_hash_frame = g.frames;
      e.last_full_frame = g.frames - (index & (ENG_TEXHASH_FULL_EVERY - 1u));
      e.last_use_serial = ++g.texture_use_serial;
@@ -30538,7 +30811,7 @@ diff --git a/libs/video/rsx_draw_engine.c b/libs/video/rsx_draw_engine.c
      if (e.handle && evicted) g.be->texture_release(g.be->user, evicted);
      if (e.handle || !evicted) g.textures[index] = e;
      return e.handle;
-@@ -1531,22 +2229,39 @@
+@@ -1531,22 +2262,39 @@
  static int eng_zdepth_to_guest(u32 slot)
  {
      eng_zdepth* z = &g.zdepths[slot];
@@ -30583,7 +30856,7 @@ diff --git a/libs/video/rsx_draw_engine.c b/libs/video/rsx_draw_engine.c
      for (u32 r = 0; r < h; r++) {
          u8* dst = (u8*)eng_guest_ptr(NULL, z->location, z->offset + r * z->pitch, w * bpp);
          if (!dst) return 0;
-@@ -1586,8 +2301,9 @@
+@@ -1586,8 +2334,9 @@
   * the four combinations of a nearest/linear minification with a
   * nearest/linear mip filter) and mag [26:24]; SET_TEXTURE_CONTROL0 carries
   * max LOD at [18:7] and min LOD at [30:19], both 4.8 fixed point. RSX's LOD
@@ -30595,7 +30868,7 @@ diff --git a/libs/video/rsx_draw_engine.c b/libs/video/rsx_draw_engine.c
  /* SET_TEXTURE_BORDER_COLOR as rsx_be_sampler_desc.border. The colour is
   * ARGB; a depth texture compares against its low 24 bits as depth. inFAMOUS
   * 2's sun shadow maps (DEPTH24_D8, wrap BORDER, a depth compare) set
-@@ -1609,6 +2325,7 @@
+@@ -1609,6 +2358,7 @@
      return 3u;                                     /* not expressible: edge clamp */
  }
  
@@ -30603,7 +30876,7 @@ diff --git a/libs/video/rsx_draw_engine.c b/libs/video/rsx_draw_engine.c
  static void eng_decode_sampler(u32 filter, u32 wrap, u32 control0,
                                 rsx_be_sampler_desc* out)
  {
-@@ -1625,7 +2342,19 @@
+@@ -1625,7 +2375,19 @@
      out->max_lod = out->mip_present ? (float)((control0 >> 7) & 0xFFFu) / 256.0f
                                      : 0.0f;
      if (out->max_lod < out->min_lod) out->max_lod = out->min_lod;
@@ -30624,7 +30897,7 @@ diff --git a/libs/video/rsx_draw_engine.c b/libs/video/rsx_draw_engine.c
  
  /* ---- pipelines ----------------------------------------------------------- */
  
-@@ -1698,16 +2427,69 @@
+@@ -1698,16 +2460,69 @@
   * layout and by the pipeline, because they must not disagree: the built-in
   * program declares all sixteen inputs, so narrowing the layout for it would
   * leave the pipeline's vertex descriptor short of what the shader reads. */
@@ -30696,7 +30969,7 @@ diff --git a/libs/video/rsx_draw_engine.c b/libs/video/rsx_draw_engine.c
      }
  
      /* A zero SET_SHADER_PROGRAM is "none", not "the program at offset 0": the
-@@ -1718,10 +2500,31 @@
+@@ -1718,10 +2533,31 @@
      if (rsx_dsp_reg(&g.rsx, 0x08E4)) {
          u32 fp_loc = 0;
          const u32 fp_off = rsx_dsp_fragment_program(&g.rsx, &fp_loc);
@@ -30732,7 +31005,7 @@ diff --git a/libs/video/rsx_draw_engine.c b/libs/video/rsx_draw_engine.c
      }
  
      if (out_vp) *out_vp = vp_uc;
-@@ -1739,10 +2542,16 @@
+@@ -1739,10 +2575,16 @@
      const u8* uc = NULL;
      u32 instrs = 0;
      if (eng_guest_programs(&uc, &instrs, NULL, NULL)) {
@@ -30753,7 +31026,7 @@ diff --git a/libs/video/rsx_draw_engine.c b/libs/video/rsx_draw_engine.c
      }
      rsx_vertex_layout_plan_init(layout, mask);
  }
-@@ -1911,19 +2720,82 @@
+@@ -1911,19 +2753,82 @@
          ? rsx_fp_structural_hash(fp_uc, fp_size, 1469598103934665603ull) : 0;
  }
  
@@ -30837,7 +31110,7 @@ diff --git a/libs/video/rsx_draw_engine.c b/libs/video/rsx_draw_engine.c
  
      const u32 fp_ctrl  = rsx_dsp_shader_control(&g.rsx);
      const u32 srgb_output = !fixed && rsx_fp_srgb_output_enabled(
-@@ -1934,19 +2806,42 @@
+@@ -1934,19 +2839,42 @@
      const u32 vtex_mask = eng_vtex_mask();
      /* BRB/CLB outcomes are baked into the program: the branch bits are
       * identity only for a program that tests them. */
@@ -30882,7 +31155,7 @@ diff --git a/libs/video/rsx_draw_engine.c b/libs/video/rsx_draw_engine.c
          if (shadow[u].enabled) shadow_mask |= 1u << u;
      }
      u8 gamma_masks[RSX_DSP_NUM_TEXTURES] = {0};
-@@ -1954,7 +2849,14 @@
+@@ -1954,7 +2882,14 @@
          rsx_dsp_texture t; rsx_dsp_get_texture(&g.rsx, u, &t);
          if (t.enabled) gamma_masks[u] = rsx_texture_gamma_mask(t.format, t.remap, t.filter, t.wrap);
      }
@@ -30898,7 +31171,7 @@ diff --git a/libs/video/rsx_draw_engine.c b/libs/video/rsx_draw_engine.c
      for (u32 u = 0; u < RSX_DSP_NUM_TEXTURES; ++u)
          if (!(gamma_units & (1u << u))) gamma_masks[u] = 0;
      /* Texture sign expansion: SET_TEXTURE_ADDRESS's UNSIGNED_REMAP_BIASED
-@@ -1965,7 +2867,14 @@
+@@ -1965,7 +2900,14 @@
          rsx_dsp_texture t; rsx_dsp_get_texture(&g.rsx, u, &t);
          if (t.enabled) expand_masks[u] = rsx_texture_expand_mask(t.format, t.remap, t.filter, t.wrap);
      }
@@ -30914,7 +31187,7 @@ diff --git a/libs/video/rsx_draw_engine.c b/libs/video/rsx_draw_engine.c
      for (u32 u = 0; u < RSX_DSP_NUM_TEXTURES; ++u)
          if (!(expand_units & (1u << u))) expand_masks[u] = 0;
  
-@@ -1979,8 +2888,20 @@
+@@ -1979,8 +2921,20 @@
              unnorm_dim[u][0] = unnorm_dim[u][1] = unnorm_dim[u][2] = 0;
  
      g.fp_constants.count = 0;
@@ -30937,7 +31210,7 @@ diff --git a/libs/video/rsx_draw_engine.c b/libs/video/rsx_draw_engine.c
  
      /* An antialiased target is held at its sample grid; WPOS must still count
       * pixels (rsx_fp_apply_wpos_grid). */
-@@ -1988,6 +2909,9 @@
+@@ -1988,6 +2942,9 @@
      rsx_dsp_get_surface(&g.rsx, &sf);
      const u32 wpos_grid[2] = { sf.aa_sx ? sf.aa_sx : 1u, sf.aa_sy ? sf.aa_sy : 1u };
      const int wpos_scaled = !fixed && (wpos_grid[0] > 1u || wpos_grid[1] > 1u);
@@ -30947,7 +31220,7 @@ diff --git a/libs/video/rsx_draw_engine.c b/libs/video/rsx_draw_engine.c
  
      /* Identity: the vertex program's own bytes, the fragment program's
       * STRUCTURE (its inline constants are hoisted into the buffered block, so
-@@ -1999,9 +2923,24 @@
+@@ -1999,9 +2956,24 @@
          static const u32 fixed_tag = 0x4E464958u;   /* "XIFN" */
          key = eng_fnv1a(&fixed_tag, sizeof fixed_tag, key);
      } else {
@@ -30974,7 +31247,7 @@ diff --git a/libs/video/rsx_draw_engine.c b/libs/video/rsx_draw_engine.c
          if (!key) return 0;
          const u32 fp_ctrl_key = fp_ctrl & 0x4Eu; /* colour width and fragment depth export */
          key = eng_fnv1a(&fp_ctrl_key, sizeof fp_ctrl_key, key);
-@@ -2019,6 +2958,7 @@
+@@ -2019,6 +2991,7 @@
          key = eng_fnv1a(&unnorm_mask, sizeof unnorm_mask, key);
          if (unnorm_mask) key = eng_fnv1a(unnorm_dim, sizeof unnorm_dim, key);
          if (wpos_scaled) key = eng_fnv1a(wpos_grid, sizeof wpos_grid, key);
@@ -30982,7 +31255,7 @@ diff --git a/libs/video/rsx_draw_engine.c b/libs/video/rsx_draw_engine.c
      }
      key = eng_fnv1a(&layout->mask, sizeof layout->mask, key);
      key = eng_fnv1a(&layout->stride, sizeof layout->stride, key);
-@@ -2035,10 +2975,16 @@
+@@ -2035,10 +3008,16 @@
              *out_fixed = p->fixed;
              *out_tex_used = p->tex_used;
              *out_fp_hash = p->fp_hash;
@@ -30999,7 +31272,7 @@ diff --git a/libs/video/rsx_draw_engine.c b/libs/video/rsx_draw_engine.c
  
      u32 handle = 0;
      int vi = 1, fi = 1;
-@@ -2062,7 +3008,9 @@
+@@ -2062,7 +3041,9 @@
                  shadow_mask ? shadow : NULL, gamma_masks, expand_units ? expand_masks : NULL,
                  s_ps_hlsl, sizeof s_ps_hlsl, &nconst);
          if (fi > 0 && nconst != g.fp_constants.count) fi = -1;
@@ -31010,7 +31283,7 @@ diff --git a/libs/video/rsx_draw_engine.c b/libs/video/rsx_draw_engine.c
              rsx_fp_apply_wpos_grid(s_ps_hlsl, sizeof s_ps_hlsl, wpos_grid[0], wpos_grid[1]) < 0)
              fi = -1;
          if (fi > 0 && rsx_fp_apply_unnorm_scale(s_ps_hlsl, sizeof s_ps_hlsl, unnorm_mask,
-@@ -2076,10 +3024,25 @@
+@@ -2076,10 +3057,25 @@
              rsx_fp_apply_alpha_test_buffered(s_ps_hlsl, sizeof s_ps_hlsl,
                                               rs->alpha_func) < 0)
              fi = -1;
@@ -31037,7 +31310,7 @@ diff --git a/libs/video/rsx_draw_engine.c b/libs/video/rsx_draw_engine.c
      const u64 fp_hash = fixed ? 0 : eng_fp_debug_hash(fp_uc, fp_size);
      /* RSX_ENGINE_SHADER_DUMP=<existing dir>: each new pipeline's two programs
       * as <dir>/pipe<handle>.vs.hlsl and .ps.hlsl, the handle being the one
-@@ -2123,6 +3086,8 @@
+@@ -2123,6 +3119,8 @@
      g.pipelines[g.n_pipelines].fp_hash = fp_hash;
      g.pipelines[g.n_pipelines].handle = handle;
      g.pipelines[g.n_pipelines].fixed = (u8)fixed;
@@ -31046,7 +31319,7 @@ diff --git a/libs/video/rsx_draw_engine.c b/libs/video/rsx_draw_engine.c
      g.pipelines[g.n_pipelines].tex_used =
          (u16)(fixed ? 0xFFFFu : eng_sampled_units(s_ps_hlsl));
      *out_tex_used = g.pipelines[g.n_pipelines].tex_used;
-@@ -2130,6 +3095,7 @@
+@@ -2130,6 +3128,7 @@
      g.pipeline_index[slot] = (u16)(g.n_pipelines + 1u);
      g.n_pipelines++;
      *out_fixed = fixed;
@@ -31054,7 +31327,59 @@ diff --git a/libs/video/rsx_draw_engine.c b/libs/video/rsx_draw_engine.c
      return handle;
  }
  
-@@ -2338,6 +3304,292 @@
+@@ -2199,16 +3198,43 @@
+             }
+             out[n].vertex_id = index; out[n].base_index = base_index; n++;
+         }
+-    } else if (!restart_en) {
+-        for (u32 i = 0; i < count; i++) {
+-            out[n + i].vertex_id = (u32)((run[2u * i] << 8) | run[2u * i + 1u]);
+-            out[n + i].base_index = base_index;
+-        }
+-        n += count;
+     } else {
+-        for (u32 i = 0; i < count; i++) {
++        u32 i = 0;
++#if defined(__SSSE3__) || defined(__AVX2__)
++        /* Eight 16-bit indices a step: swap their bytes, widen them and interleave them with the
++         * base into references -- the byte-at-a-time loop was a tenth of sink_end on the Deck. A
++         * group holding the restart value takes the scalar steps for its eight. (A restart value above
++         * 0xFFFF never matches a 16-bit index.) */
++        const __m128i swap16 = _mm_setr_epi8(1, 0, 3, 2, 5, 4, 7, 6, 9, 8, 11, 10, 13, 12, 15, 14);
++        const __m128i base = _mm_set1_epi32((int)base_index), zero = _mm_setzero_si128();
++        const int check = restart_en && restart_val <= 0xFFFFu;
++        const __m128i rv = _mm_set1_epi16((short)(u16)restart_val);
++        for (; s_drawfast && i + 8u <= count; i += 8u) {
++            const __m128i v = _mm_shuffle_epi8(_mm_loadu_si128((const __m128i*)(run + 2u * i)), swap16);
++            if (check && _mm_movemask_epi8(_mm_cmpeq_epi16(v, rv))) {
++                for (u32 j = i; j < i + 8u; j++) {
++                    const u32 index = (u32)((run[2u * j] << 8) | run[2u * j + 1u]);
++                    if (index == restart_val) {
++                        dc.n_refs = n;
++                        if (!rsx_restart_cut_push(&dc.cuts, &dc.n_cuts, &dc.cap_cuts, n)) return 0;
++                        continue;
++                    }
++                    out[n].vertex_id = index; out[n].base_index = base_index; n++;
++                }
++                continue;
++            }
++            const __m128i lo = _mm_unpacklo_epi16(v, zero), hi = _mm_unpackhi_epi16(v, zero);
++            rsx_vertex_ref* o = out + n;
++            _mm_storeu_si128((__m128i*)(o + 0), _mm_unpacklo_epi32(lo, base));
++            _mm_storeu_si128((__m128i*)(o + 2), _mm_unpackhi_epi32(lo, base));
++            _mm_storeu_si128((__m128i*)(o + 4), _mm_unpacklo_epi32(hi, base));
++            _mm_storeu_si128((__m128i*)(o + 6), _mm_unpackhi_epi32(hi, base));
++            n += 8u;
++        }
++#endif
++        for (; i < count; i++) {
+             const u32 index = (u32)((run[2u * i] << 8) | run[2u * i + 1u]);
+-            if (index == restart_val) {
++            if (restart_en && index == restart_val) {
+                 dc.n_refs = n;
+                 if (!rsx_restart_cut_push(&dc.cuts, &dc.n_cuts, &dc.cap_cuts, n)) return 0;
+                 continue;
+@@ -2338,6 +3364,416 @@
      dc.n_verts = dc.n_refs;
  }
  
@@ -31077,7 +31402,7 @@ diff --git a/libs/video/rsx_draw_engine.c b/libs/video/rsx_draw_engine.c
 +    return ps3_ab_on("vkconst") != 0;
 +}
 +
-+/* ---- VK_VCACHE: converted draws kept across frames (Windows; on unless VK_VCACHE=0) ------------
++/* ---- VK_VCACHE: converted draws kept across frames (Windows and Linux; on unless VK_VCACHE=0) ---------
 + * The D3D12 renderer's LD_VCACHE (rsx_live_draw.c, where the reasoning is), for this engine. GT5
 + * draws the same car and track meshes every frame from memory nothing rewrites, and each draw
 + * gathered its indices, de-duplicated them, converted every vertex and copied it all into the
@@ -31087,12 +31412,104 @@ diff --git a/libs/video/rsx_draw_engine.c b/libs/video/rsx_draw_engine.c
 + * on the guest reservation (MEM_WRITE_WATCH, boot_main.cpp) says whether they were. A key is
 + * recorded the second time it is seen, stored the third (its pages still clean), drawn from the
 + * arena after that; a key whose pages keep being written is left to the ordinary path after two
-+ * strikes. VK_VCACHE_MB sizes the arena (the backend's); PS3_AB_WHAT=vcache alternates it (tests). */
-+#if defined(_WIN32)
++ * strikes. VK_VCACHE_MB sizes the arena (the backend's); PS3_AB_WHAT=vcache alternates it (tests).
++ * Linux (6.7 or newer) has the same tracking: the guest mapping is registered once for userfaultfd's
++ * asynchronous write-protect (UFFD_FEATURE_WP_ASYNC: the kernel lifts the protection itself on the
++ * first write and remembers it, no handler thread), and PAGEMAP_SCAN lists the written pages of a
++ * range and protects them again in one call -- what Wine builds GetWriteWatch on. A kernel without
++ * it leaves the cache off. Steam Deck (kernel 7.2), GT5 US 2.17, alternated every 10 s: a race paused
++ * on the grid 14.9 vs 14.5 fps (~740 draws a frame from the arena), car select unchanged (16.8 vs
++ * 16.7: the car's vertices are rewritten by SPU jobs every frame). */
++#if defined(_WIN32) || (defined(__linux__) && __has_include(<linux/userfaultfd.h>))
 +#include <stdint.h>
++#if defined(_WIN32)
 +__declspec(dllimport) unsigned int __stdcall GetWriteWatch(unsigned long flags, void* base, size_t size,
 +                                                          void** addrs, unsigned long long* count,
 +                                                          unsigned long* granularity);
++static int eng_ww_init(void) { return 1; }
++#else
++#include <errno.h>
++#include <fcntl.h>
++#include <unistd.h>
++#include <sys/ioctl.h>
++#include <sys/syscall.h>
++#include <linux/fs.h>
++#include <linux/userfaultfd.h>
++#ifndef PAGEMAP_SCAN   /* headers older than 6.7: the kernel may still have it */
++#define PAGEMAP_SCAN _IOWR('f', 16, struct pm_scan_arg)
++#define PAGE_IS_WRITTEN (1 << 3)
++#define PM_SCAN_WP_MATCHING (1 << 0)
++#define PM_SCAN_CHECK_WPASYNC (1 << 1)
++struct page_region { unsigned long long start, end, categories; };
++struct pm_scan_arg {
++    unsigned long long size, flags, start, end, walk_end, vec, vec_len, max_pages,
++                       category_inverted, category_mask, category_anyof_mask, return_mask;
++};
++#endif
++#ifndef UFFD_FEATURE_WP_ASYNC
++#define UFFD_FEATURE_WP_ASYNC (1 << 15)
++#endif
++#ifndef UFFD_FEATURE_WP_UNPOPULATED
++#define UFFD_FEATURE_WP_UNPOPULATED (1 << 13)
++#endif
++#ifndef UFFD_USER_MODE_ONLY
++#define UFFD_USER_MODE_ONLY 1
++#endif
++static int s_ww_uffd = -1, s_ww_pagemap = -1;
++/* Register the 4 GB guest mapping (boot_main.cpp: private anonymous) once. The descriptor stays open:
++ * closing it would drop the registration. Unpopulated pages count as protected, so a page's first
++ * write ever is seen too. */
++static int eng_ww_init(void)
++{
++    static int st = -1;
++    if (st >= 0) return st;
++    st = 0;
++    int u = (int)syscall(SYS_userfaultfd, O_CLOEXEC | O_NONBLOCK | UFFD_USER_MODE_ONLY);
++    if (u < 0) { fprintf(stderr, "[vcache] no userfaultfd (%d): the cache stays off\n", errno); return 0; }
++    struct uffdio_api api; memset(&api, 0, sizeof api);
++    api.api = UFFD_API; api.features = UFFD_FEATURE_WP_ASYNC | UFFD_FEATURE_WP_UNPOPULATED;
++    struct uffdio_register reg; memset(&reg, 0, sizeof reg);
++    reg.range.start = (unsigned long long)(uintptr_t)vm_base; reg.range.len = 0x100000000ull;
++    reg.mode = UFFDIO_REGISTER_MODE_WP;
++    const int pm = open("/proc/self/pagemap", O_RDONLY | O_CLOEXEC);
++    if (ioctl(u, UFFDIO_API, &api) != 0 || ioctl(u, UFFDIO_REGISTER, &reg) != 0 || pm < 0) {
++        fprintf(stderr, "[vcache] no asynchronous write-protect on this kernel (%d): the cache stays off\n", errno);
++        close(u); if (pm >= 0) close(pm);
++        return 0;
++    }
++    s_ww_uffd = u; s_ww_pagemap = pm;
++    return st = 1;
++}
++/* GetWriteWatch(WRITE_WATCH_FLAG_RESET) for Linux: the written pages of [base, base + size), at most
++ * *count of them, are listed and protected again. 0 on success. */
++static unsigned int GetWriteWatch(unsigned long flags, void* base, size_t size, void** addrs,
++                                  unsigned long long* count, unsigned long* granularity)
++{
++    (void)flags;
++    *granularity = 4096;
++    struct page_region rg[64];
++    unsigned long long n = 0;
++    const unsigned long long end = (unsigned long long)(uintptr_t)base + size;
++    unsigned long long at = (unsigned long long)(uintptr_t)base;
++    while (at < end) {
++        struct pm_scan_arg a; memset(&a, 0, sizeof a);
++        a.size = sizeof a; a.flags = PM_SCAN_WP_MATCHING | PM_SCAN_CHECK_WPASYNC;
++        a.start = at; a.end = end; a.vec = (unsigned long long)(uintptr_t)rg; a.vec_len = 64;
++        a.category_mask = PAGE_IS_WRITTEN; a.return_mask = PAGE_IS_WRITTEN;
++        const long r = ioctl(s_ww_pagemap, PAGEMAP_SCAN, &a);
++        if (r < 0) return 1;
++        for (long i = 0; i < r; i++)
++            for (unsigned long long pg = rg[i].start; pg < rg[i].end; pg += 4096) {
++                if (n >= *count) return 1;   /* more than the caller can take: treat as failed */
++                addrs[n++] = (void*)(uintptr_t)pg;
++            }
++        if (!a.walk_end || a.walk_end <= at) break;
++        at = a.walk_end;
++    }
++    *count = n;
++    return 0;
++}
++#endif
 +extern unsigned long long cellPad_now_ms(void);
 +#define ENG_VC_SLOTS 16384u
 +#define ENG_VC_SPANS 4u
@@ -31117,6 +31534,11 @@ diff --git a/libs/video/rsx_draw_engine.c b/libs/video/rsx_draw_engine.c
 +} eng_vc_entry;
 +static eng_vc_entry* s_vc;
 +static int s_vc_on = -1;
++/* The hash and last use of each slot, apart from the 800-byte entries: a lookup probes up to 32
++ * slots, and reading those from the entries was a cache miss each (a fifth of sink_end on the
++ * Deck). h == 0 is an empty slot, as state == 0 is. */
++typedef struct { u64 h; u32 last_frame, pad; } eng_vc_tag;
++static eng_vc_tag* s_vc_tag;
 +static u32* s_vc_page_gen;                 /* one per 4 KB of the 4 GB guest space */
 +static u32 s_vc_gen = 1;
 +static void* s_vc_addr[ENG_VC_SPAN_PAGES];
@@ -31133,12 +31555,14 @@ diff --git a/libs/video/rsx_draw_engine.c b/libs/video/rsx_draw_engine.c
 +static int eng_vc_enabled(void)
 +{
 +    if (s_vc_on < 0) {
-+        const char* e = getenv("VK_VCACHE");   /* on unless VK_VCACHE=0 (this part is Windows only) */
-+        s_vc_on = (!e || atoi(e) != 0) && g.be && g.be->arena_alloc && g.be->arena_reset && g.be->draw_arena && vm_base;
++        const char* e = getenv("VK_VCACHE");
++        s_vc_on = !e || atoi(e) != 0;          /* on unless VK_VCACHE=0 */
++        s_vc_on = s_vc_on && eng_ww_init() && g.be && g.be->arena_alloc && g.be->arena_reset && g.be->draw_arena && vm_base;
 +        if (s_vc_on) {
 +            s_vc = (eng_vc_entry*)calloc(ENG_VC_SLOTS, sizeof(eng_vc_entry));
++            s_vc_tag = (eng_vc_tag*)calloc(ENG_VC_SLOTS, sizeof(eng_vc_tag));
 +            s_vc_page_gen = (u32*)calloc(1u << 20, sizeof(u32));
-+            if (!s_vc || !s_vc_page_gen) s_vc_on = 0;
++            if (!s_vc || !s_vc_tag || !s_vc_page_gen) s_vc_on = 0;
 +        }
 +        fprintf(stderr, "[vcache] %s\n", s_vc_on ? "on: converted draws are kept while their guest pages are unwritten (VK_VCACHE)" : "off");
 +    }
@@ -31200,6 +31624,18 @@ diff --git a/libs/video/rsx_draw_engine.c b/libs/video/rsx_draw_engine.c
 +            if (s_vc_page_gen[(u32)((pg - vm_base) >> 12)] > e->gen) return 0;
 +    return 1;
 +}
++
++static int eng_ww_clean_since(const u8* lo, const u8* hi, u32 gen)
++{
++    if (!eng_vc_enabled()) return -1;
++    lo = (const u8*)((uintptr_t)lo & ~(uintptr_t)4095);
++    hi = (const u8*)(((uintptr_t)hi + 4095) & ~(uintptr_t)4095);
++    if (!eng_vc_harvest(lo, hi)) return -1;
++    for (const u8* pg = lo; pg < hi; pg += 4096)
++        if (s_vc_page_gen[(u32)((pg - vm_base) >> 12)] > gen) return 0;
++    return 1;
++}
++static u32 eng_ww_gen(void) { return s_vc_gen; }
 +
 +/* The guest pages this draw read, page-aligned, merged, at most ENG_VC_SPANS, harvested. */
 +static int eng_vc_record(eng_vc_entry* e)
@@ -31271,12 +31707,21 @@ diff --git a/libs/video/rsx_draw_engine.c b/libs/video/rsx_draw_engine.c
 +    u32 i = (u32)(h >> 17) & (ENG_VC_SLOTS - 1u);
 +    eng_vc_entry* empty = NULL;
 +    eng_vc_entry* oldest = NULL;
++    u32 oldest_frame = 0;
 +    for (u32 probe = 0; probe < 32; probe++, i = (i + 1u) & (ENG_VC_SLOTS - 1u)) {
 +        eng_vc_entry* e = &s_vc[i];
-+        if (!e->state) { if (!empty) empty = e; break; }
-+        if (!oldest || e->last_frame < oldest->last_frame) oldest = e;
-+        if (e->h != h || memcmp(&e->k, &k, sizeof k) != 0) continue;
-+        e->last_frame = g.frames;
++        if (s_drawfast) {
++            const eng_vc_tag* t = &s_vc_tag[i];
++            if (!t->h) { if (!empty) empty = e; break; }
++            if (!oldest || t->last_frame < oldest_frame) { oldest = e; oldest_frame = t->last_frame; }
++            if (t->h != h) continue;
++        } else {   /* the probe as it was: the entries themselves */
++            if (!e->state) { if (!empty) empty = e; break; }
++            if (!oldest || e->last_frame < oldest_frame) { oldest = e; oldest_frame = e->last_frame; }
++            if (e->h != h) continue;
++        }
++        if (memcmp(&e->k, &k, sizeof k) != 0) continue;
++        e->last_frame = s_vc_tag[i].last_frame = g.frames;
 +        if (e->state == 3) { s_vc_stat[4]++; return 0; }
 +        *out = e;
 +        if (!e->n_spans) return 1;
@@ -31300,6 +31745,7 @@ diff --git a/libs/video/rsx_draw_engine.c b/libs/video/rsx_draw_engine.c
 +    if (!e) { s_vc_stat[5]++; return 0; }
 +    memset(e, 0, sizeof *e);
 +    e->h = h; e->k = k; e->state = 1; e->last_frame = g.frames;
++    s_vc_tag[e - s_vc].h = h; s_vc_tag[e - s_vc].last_frame = g.frames;
 +    *out = e;
 +    return 1;
 +}
@@ -31314,6 +31760,7 @@ diff --git a/libs/video/rsx_draw_engine.c b/libs/video/rsx_draw_engine.c
 +    if (*off == ~0u) return NULL;           /* too big to keep, or no arena now: not full */
 +    g.be->arena_reset(g.be->user);
 +    memset(s_vc, 0, (size_t)ENG_VC_SLOTS * sizeof(eng_vc_entry));
++    memset(s_vc_tag, 0, (size_t)ENG_VC_SLOTS * sizeof(eng_vc_tag));
 +    s_vc_stat[6]++;
 +    return NULL;
 +}
@@ -31342,12 +31789,14 @@ diff --git a/libs/video/rsx_draw_engine.c b/libs/video/rsx_draw_engine.c
 +static void eng_vc_report(void) {}
 +static unsigned long long s_vc_stat[8];
 +static u32 s_vc_gen;
++static int eng_ww_clean_since(const u8* lo, const u8* hi, u32 gen) { (void)lo; (void)hi; (void)gen; return -1; }
++static u32 eng_ww_gen(void) { return 0; }
 +#endif
 +
  /* ---- sink ---------------------------------------------------------------- */
  
  static void sink_begin(void* user, const rsx_dispatch* r, u32 prim)
-@@ -2454,15 +3706,339 @@
+@@ -2454,15 +3890,339 @@
                                         const rsx_dsp_texture* t)
  {
      static u32 logs;
@@ -31690,7 +32139,7 @@ diff --git a/libs/video/rsx_draw_engine.c b/libs/video/rsx_draw_engine.c
  }
  
  static u32 sink_bind_textures(const u32* target_slots, u32 n_targets,
-@@ -2473,6 +4049,7 @@
+@@ -2473,6 +4233,7 @@
      u32 mask = 0;
      u32 feedback[RSX_BE_MAX_COLOR_TARGETS] = {0};
      for (u32 u = 0; u < RSX_BE_MAX_TEXTURES; u++) {
@@ -31698,7 +32147,7 @@ diff --git a/libs/video/rsx_draw_engine.c b/libs/video/rsx_draw_engine.c
          rsx_dsp_texture t;
          rsx_dsp_get_texture(&g.rsx, u, &t);
          /* A unit left enabled by an earlier draw but not sampled by this
-@@ -2482,6 +4059,7 @@
+@@ -2482,6 +4243,7 @@
          mask |= 1u << u;
          eng_decode_sampler(t.filter, t.wrap, t.control0, &samplers[u]);
          samplers[u].border = eng_border_class(t.format, t.border_color);
@@ -31706,7 +32155,7 @@ diff --git a/libs/video/rsx_draw_engine.c b/libs/video/rsx_draw_engine.c
  
          int sampled = -1, own = 0, surface_at = -1;
          /* DXT data is never a render target's output: no surface colour
-@@ -2492,6 +4070,57 @@
+@@ -2492,6 +4254,57 @@
           * target in Resistance: Fall of Man). Neither colour nor depth
           * surfaces are looked up for it. */
          const u32 base_fmt = t.format & RSX_TEX_FMT_BASE_MASK & ~(u32)RSX_TEX_FMT_UNNORM;
@@ -31764,7 +32213,7 @@ diff --git a/libs/video/rsx_draw_engine.c b/libs/video/rsx_draw_engine.c
          const int compressed = base_fmt == RSX_TEX_FMT_DXT1 ||
                                 base_fmt == RSX_TEX_FMT_DXT23 ||
                                 base_fmt == RSX_TEX_FMT_DXT45;
-@@ -2508,6 +4137,7 @@
+@@ -2508,6 +4321,7 @@
              sampled = (int)i;
              break;
          }
@@ -31772,7 +32221,7 @@ diff --git a/libs/video/rsx_draw_engine.c b/libs/video/rsx_draw_engine.c
          /* The depth at this address, when it was written after any colour
           * there: a depth-only pass names its zeta as a colour target too. */
          int zsrc = -1;
-@@ -2515,13 +4145,19 @@
+@@ -2515,13 +4329,19 @@
              const eng_zdepth* z = &g.zdepths[i];
              if (z->location != t.location || z->offset != t.offset || !z->depth_serial)
                  continue;
@@ -31795,7 +32244,7 @@ diff --git a/libs/video/rsx_draw_engine.c b/libs/video/rsx_draw_engine.c
              /* DEPTH24_D8 keeps the backend's own snapshot when it has one;
               * anything else goes through guest memory. */
              if (base_fmt == RSX_TEX_FMT_DEPTH24_D8 && current_zslot != (u32)zsrc) {
-@@ -2542,8 +4178,13 @@
+@@ -2542,8 +4362,13 @@
              eng_surface* s = &g.surfaces[surface_at];
              rsx_dsp_surface sf;
              rsx_dsp_get_surface(&g.rsx, &sf);
@@ -31810,7 +32259,7 @@ diff --git a/libs/video/rsx_draw_engine.c b/libs/video/rsx_draw_engine.c
              u32 k = 0;
              while (k < n_targets && target_slots[k] != (u32)surface_at) k++;
              if (k == n_targets) return eng_color_feedback_failure(u, s, &t);
-@@ -2575,17 +4216,59 @@
+@@ -2575,17 +4400,59 @@
              continue;
          }
          if (sampled >= 0) {
@@ -31875,7 +32324,7 @@ diff --git a/libs/video/rsx_draw_engine.c b/libs/video/rsx_draw_engine.c
                      g.zdepths[i].last_use = g.frames;
                      const u32 snap = eng_zdepth_snapshot(i, t.width, t.height);
                      if (snap) textures[u] = snap;
-@@ -2597,6 +4280,42 @@
+@@ -2597,6 +4464,42 @@
                                         t.width, t.height, t.mipmaps, t.pitch,
                                         (int)t.cubemap, t.remap & 0xFFFFu,
                                         (t.dimension == 3 && !t.cubemap) ? t.depth : 1u);
@@ -31918,7 +32367,7 @@ diff --git a/libs/video/rsx_draw_engine.c b/libs/video/rsx_draw_engine.c
      }
      return mask;
  }
-@@ -2612,6 +4331,7 @@
+@@ -2612,6 +4515,7 @@
          rsx_dsp_get_vertex_texture(&g.rsx, u, &vt);
          eng_decode_sampler(vt.filter, vt.wrap, vt.control0, &samplers[u]);
          samplers[u].border = eng_border_class(vt.format, vt.border_color);
@@ -31926,7 +32375,7 @@ diff --git a/libs/video/rsx_draw_engine.c b/libs/video/rsx_draw_engine.c
          /* A vertex unit has no crossbar, so its remap is the identity. */
          textures[u] = eng_texture_slot(vt.location, vt.offset, vt.format,
                                         vt.width, vt.height, vt.mipmaps,
-@@ -2691,6 +4411,22 @@
+@@ -2691,6 +4595,22 @@
      if (s_pd.state == 1 && s_pd.after_s &&
          difftime(time(NULL), s_pd.start) >= (double)s_pd.after_s && pd_open_index())
          fprintf(s_pd.index, "from a draw of frame %u, %u s in\n", g.frames, s_pd.after_s);
@@ -31949,7 +32398,7 @@ diff --git a/libs/video/rsx_draw_engine.c b/libs/video/rsx_draw_engine.c
      return s_pd.state == 2;
  }
  
-@@ -2728,14 +4464,15 @@
+@@ -2728,14 +4648,15 @@
      default: return;
      }
      if (!s->handle || !s->w || !s->h || !g.be->readback) return;
@@ -31970,7 +32419,7 @@ diff --git a/libs/video/rsx_draw_engine.c b/libs/video/rsx_draw_engine.c
              const u8* p = raw + i * bpp;
              u8* o = rgb + i * 3u;
              if (s->fmt == RSX_BE_FMT_R8G8B8A8) {
-@@ -2755,8 +4492,8 @@
+@@ -2755,8 +4676,8 @@
                  o[0] = o[1] = o[2] = pd_unit(v);
              }
          }
@@ -31981,7 +32430,7 @@ diff --git a/libs/video/rsx_draw_engine.c b/libs/video/rsx_draw_engine.c
          fclose(f);
      }
      free(raw);
-@@ -2770,8 +4507,8 @@
+@@ -2770,8 +4691,8 @@
      const eng_zdepth* z = &g.zdepths[zslot];
      *lo_out = *hi_out = -1.0f;
      if (!g.be->depth_readback || !z->handle) return;
@@ -31992,7 +32441,7 @@ diff --git a/libs/video/rsx_draw_engine.c b/libs/video/rsx_draw_engine.c
      float* d = (float*)malloc((size_t)w * h * sizeof(float));
      u8* px = (u8*)malloc((size_t)w * h);
      FILE* f = (d && px) ? fopen(path, "wb") : NULL;
-@@ -3022,10 +4759,1869 @@
+@@ -3022,10 +4943,1870 @@
                  what, rc[0], rc[1], rc[2], rc[3], w, h);
  }
  
@@ -32059,6 +32508,7 @@ diff --git a/libs/video/rsx_draw_engine.c b/libs/video/rsx_draw_engine.c
 +    /* PS3_AB_PERIOD's per-segment report. The D3D12 path counts its frames in rsx_live_draw.c; this
 +     * engine runs only when that one doesn't (Vulkan, Metal), so no frame is counted twice. */
 +    { extern void ps3_ab_frame(void); ps3_ab_frame(); }
++    { extern int ps3_ab_on(const char* what); s_drawfast = ps3_ab_on("drawfast") != 0; }
 +    if (w.mode < 0) {
 +        const char* e = getenv("LD_WATCH_IDLE_S"); if (e && atoi(e) >= 0) w.idle_ms = (unsigned long long)atoi(e) * 1000ull;
 +    }
@@ -33862,7 +34312,7 @@ diff --git a/libs/video/rsx_draw_engine.c b/libs/video/rsx_draw_engine.c
      /* Mixed geometry sources have no defined concatenation here. Reject the
       * whole group instead of drawing partial/misordered geometry. */
      if (dc.n_immediate && (dc.n_arr || dc.n_idx || dc.inl_bytes ||
-@@ -3051,12 +6647,23 @@
+@@ -3051,12 +6832,23 @@
  
      rsx_vertex_layout_plan layout;
      eng_vertex_layout(&layout);
@@ -33888,7 +34338,7 @@ diff --git a/libs/video/rsx_draw_engine.c b/libs/video/rsx_draw_engine.c
          if (!eng_topology_rebuild(prim, dc.refs_remapped, &indexed)) return;
          n_draw = indexed
              ? rsx_draw_engine_topology_index_count(prim, dc.n_source_refs,
-@@ -3068,17 +6675,27 @@
+@@ -3068,17 +6860,27 @@
      rsx_be_render_state rs;
      rsx_draw_engine_decode_render_state(&g.rsx, &rs);
  
@@ -33922,7 +34372,7 @@ diff --git a/libs/video/rsx_draw_engine.c b/libs/video/rsx_draw_engine.c
  
      /* A guest program pair that will not translate has no fallback: the draw
       * is dropped, as the reference engine drops it. Substituting the built-in
-@@ -3087,12 +6704,24 @@
+@@ -3087,12 +6889,24 @@
      int pipeline_is_fixed = 1;
      u32 tex_used = 0;
      u64 fp_hash = 0;
@@ -33949,7 +34399,7 @@ diff --git a/libs/video/rsx_draw_engine.c b/libs/video/rsx_draw_engine.c
  
      /* Textures before any pipeline or target binding: a cache refresh can
       * replace a resource, and the backend is free to submit while doing it. */
-@@ -3107,10 +6736,35 @@
+@@ -3107,10 +6921,35 @@
      const u32 tex_mask = sink_bind_textures(targets, n_targets, zslot, tex_used,
                                              textures, samplers);
      if (tex_mask == ENG_INVALID) return;
@@ -33986,7 +34436,7 @@ diff --git a/libs/video/rsx_draw_engine.c b/libs/video/rsx_draw_engine.c
          if (!dc_reserve_indices(n_draw)) return;
          rsx_draw_engine_write_topology_indices(
              prim, dc.n_source_refs, dc.cuts, dc.n_cuts,
-@@ -3136,8 +6790,41 @@
+@@ -3136,8 +6975,41 @@
          xf[5] = -((vp.translate[1] - Hv * 0.5f) / (Hv * 0.5f));
          xf[6] = vp.translate[2];
      }
@@ -34030,7 +34480,7 @@ diff --git a/libs/video/rsx_draw_engine.c b/libs/video/rsx_draw_engine.c
  
      /* The buffered fragment constants, then fp_alpha: the layout
       * rsx_fp_decompile_buffered_ex compiled the shader against. */
-@@ -3160,34 +6847,68 @@
+@@ -3160,34 +7032,68 @@
        const u32 win = rsx_dsp_reg(&g.rsx, 0x1D88);
        alpha[1] = ((win >> 12) & 0xFu) ? (float)(win & 0xFFFu) : 0.0f;
        alpha[2] = ((win >> 16) & 0xFu) ? -0.5f : 0.0f;
@@ -34107,7 +34557,7 @@ diff --git a/libs/video/rsx_draw_engine.c b/libs/video/rsx_draw_engine.c
          g.be->set_scissor(g.be->user, sc[0], sc[1], sc[2], sc[3]);
      }
      /* Dynamic, and deliberately outside the pipeline key. */
-@@ -3219,23 +6940,62 @@
+@@ -3219,23 +7125,62 @@
              if (slope != slope) slope = 0.0f;   /* NaN */
              if (units != units) units = 0.0f;
          }
@@ -34174,7 +34624,7 @@ diff --git a/libs/video/rsx_draw_engine.c b/libs/video/rsx_draw_engine.c
      }
  }
  
-@@ -3243,21 +7003,25 @@
+@@ -3243,21 +7188,25 @@
  {
      (void)user; (void)r;
      if (!g.ready) return;
@@ -34211,7 +34661,7 @@ diff --git a/libs/video/rsx_draw_engine.c b/libs/video/rsx_draw_engine.c
          const u32 c = rsx_dsp_clear_color(&g.rsx);
          const float rgba[4] = {
              (float)((c >> 16) & 0xFF) / 255.0f,
-@@ -3277,6 +7041,11 @@
+@@ -3277,6 +7226,11 @@
              if (!part) continue;
              if (part == 2 && g.be->clear_color_rect) {
                  eng_log_rect_clear("colour", rc, s->w, s->h);
@@ -34223,7 +34673,7 @@ diff --git a/libs/video/rsx_draw_engine.c b/libs/video/rsx_draw_engine.c
                  g.be->clear_color_rect(g.be->user, s->handle, rgba,
                                         rc[0], rc[1], rc[2], rc[3]);
              } else
-@@ -3286,63 +7055,264 @@
+@@ -3286,63 +7240,264 @@
          if (wrote) eng_surfaces_wrote(targets, n_targets);
      }
      if (mask & (RSX_CLEAR_DEPTH | RSX_CLEAR_STENCIL)) {
@@ -34545,7 +34995,7 @@ diff --git a/libs/video/rsx_draw_engine.c b/libs/video/rsx_draw_engine.c
  
  /* Resolve a flip's buffer id to a REGISTERED surface rather than whatever is
   * currently bound: the live target at that instant is often an offscreen
-@@ -3360,12 +7330,29 @@
+@@ -3360,12 +7515,29 @@
      return eng_current_surface();
  }
  
@@ -34575,7 +35025,7 @@ diff --git a/libs/video/rsx_draw_engine.c b/libs/video/rsx_draw_engine.c
      if (getenv("PS3RECOMP_METAL_FRAME_DUMP") && g.frames % 120 == 0) {
          u32 current = eng_current_surface();
          fprintf(stderr, "[rsx capture] frame=%u buffer=%u selected=%u current=%u draws=%u surfaces=%u\n",
-@@ -3375,9 +7362,36 @@
+@@ -3375,9 +7547,36 @@
                      i, g.surfaces[i].location, g.surfaces[i].offset,
                      g.surfaces[i].w, g.surfaces[i].h, g.surfaces[i].handle);
      }
@@ -34613,7 +35063,7 @@ diff --git a/libs/video/rsx_draw_engine.c b/libs/video/rsx_draw_engine.c
      g.frames++;
      g.last_guest_draws = g.guest_draws;
      g.guest_draws = 0;
-@@ -3430,7 +7444,7 @@
+@@ -3430,7 +7629,7 @@
        s_texhash_full_always = e && *e && strcmp(e, "0") != 0; }
      { const char* e = getenv("PS3RECOMP_ENG_DEPTH_VIA_GUEST");
        s_depth_via_guest = e && *e && strcmp(e, "0") != 0; }
@@ -34622,7 +35072,7 @@ diff --git a/libs/video/rsx_draw_engine.c b/libs/video/rsx_draw_engine.c
      if (!g.vp_cb) return -1;
      if (g.be->init && g.be->init(g.be->user, g.width, g.height) != 0) {
          free(g.vp_cb); g.vp_cb = NULL;
-@@ -3448,6 +7462,7 @@
+@@ -3448,6 +7647,7 @@
      sink.flip             = sink_flip;
      rsx_dispatch_init(&g.rsx, &sink);
      g.ready = 1;
@@ -34630,7 +35080,7 @@ diff --git a/libs/video/rsx_draw_engine.c b/libs/video/rsx_draw_engine.c
      /* Display buffers the title registered before the backend came up. */
      cellGcm_replay_display_buffers_to_engine();
      fprintf(stderr, "[rsx engine] register-file draw engine up (%ux%u)\n",
-@@ -3460,18 +7475,47 @@
+@@ -3460,18 +7660,47 @@
      if (!g.be) return;
      if (g.ready && g.be->submit_and_wait)
          g.be->submit_and_wait(g.be->user, RSX_BE_FLUSH_SHUTDOWN);
@@ -34679,7 +35129,7 @@ diff --git a/libs/video/rsx_draw_engine.c b/libs/video/rsx_draw_engine.c
      if (g.ready && g.be->shutdown) g.be->shutdown(g.be->user);
  
      rsx_draw_engine_set_guest_memory(NULL, NULL);
-@@ -3524,7 +7568,9 @@
+@@ -3524,7 +7753,9 @@
       * re-present a double-buffered title's OTHER scanout. Presenting twice is
       * harmless either way -- the engine never clears the surface, so a second
       * present just blits the same image again. */
@@ -34689,7 +35139,7 @@ diff --git a/libs/video/rsx_draw_engine.c b/libs/video/rsx_draw_engine.c
  }
  
  void rsx_draw_engine_present_buffer(u32 buffer_id)
-@@ -3551,7 +7597,7 @@
+@@ -3551,7 +7782,7 @@
      const eng_surface* s = &g.surfaces[slot];
      if (!s->handle || s->fmt != RSX_BE_FMT_R8G8B8A8 || !s->w || !s->h) return 0;
      u8 px[4] = { 0, 0, 0, 0 };
@@ -38072,12 +38522,14 @@ diff --git a/libs/video/rsx_vulkan_backend.c b/libs/video/rsx_vulkan_backend.c
      VK_LOG("using device %d: %s\n", best, p.deviceName);
      return 0;
  }
-@@ -407,10 +516,140 @@
+@@ -407,10 +516,142 @@
      return -1;
  }
  
 +/* ---- VK_IMAGE_POOL: released images stand in for the next ones made the same (on by default on
-+ * Windows; VK_IMAGE_POOL=0 turns it off, =1 turns it on elsewhere) ----------------------------------
++ * Windows and Linux; VK_IMAGE_POOL=0 turns it off, =1 turns it on elsewhere) ------------------------
++ * Steam Deck (radv), GT5 US 2.17, PGO build, alternated every 10 s: car select 16.9 vs 16.0 fps,
++ * a race paused on the grid 14.4 vs 12.1 (+19%), with ~800 images made and freed a second.
 + * Every image had memory of its own (vkAllocateMemory), and Windows makes and frees each allocation
 + * in the kernel: a GT5 race made and freed hundreds a second (textures the game rewrites, feedback
 + * copies, depth read as colour), and those calls were the walker's largest cost after the FIFO
@@ -38097,8 +38549,8 @@ diff --git a/libs/video/rsx_vulkan_backend.c b/libs/video/rsx_vulkan_backend.c
 +    static int on = -1;
 +    if (on < 0) {
 +        const char* e = getenv("VK_IMAGE_POOL");
-+#ifdef _WIN32
-+        on = !e || atoi(e) != 0;        /* on unless VK_IMAGE_POOL=0 (measured on Windows) */
++#if defined(_WIN32) || defined(__linux__)
++        on = !e || atoi(e) != 0;        /* on unless VK_IMAGE_POOL=0 (measured on Windows and the Deck) */
 +#else
 +        on = e && atoi(e) != 0;
 +#endif
@@ -38213,7 +38665,7 @@ diff --git a/libs/video/rsx_vulkan_backend.c b/libs/video/rsx_vulkan_backend.c
      VkImageCreateInfo ici = {
          .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO, .imageType = VK_IMAGE_TYPE_2D,
          .format = fmt, .extent = { w, h, 1 }, .mipLevels = levels, .arrayLayers = 1,
-@@ -429,6 +668,7 @@
+@@ -429,6 +670,7 @@
      VkMemoryAllocateInfo mai = { .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
                                   .allocationSize = req.size, .memoryTypeIndex = type };
      VK_CHECK(pvkAllocateMemory(s_vk.device, &mai, NULL, &im->mem), "vkAllocateMemory(image)");
@@ -38221,7 +38673,7 @@ diff --git a/libs/video/rsx_vulkan_backend.c b/libs/video/rsx_vulkan_backend.c
      VK_CHECK(pvkBindImageMemory(s_vk.device, im->img, im->mem, 0), "vkBindImageMemory");
      VkImageViewCreateInfo vci = {
          .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO, .image = im->img,
-@@ -436,6 +676,8 @@
+@@ -436,6 +678,8 @@
          .subresourceRange = { aspect, 0, levels, 0, 1 },
      };
      VK_CHECK(pvkCreateImageView(s_vk.device, &vci, NULL, &im->view), "vkCreateImageView");
@@ -38230,7 +38682,7 @@ diff --git a/libs/video/rsx_vulkan_backend.c b/libs/video/rsx_vulkan_backend.c
      return 0;
  }
  
-@@ -444,6 +686,83 @@
+@@ -444,6 +688,83 @@
  {
      return vk_create_image_levels(im, fmt, w, h, 1, usage, aspect);
  }
@@ -38314,7 +38766,7 @@ diff --git a/libs/video/rsx_vulkan_backend.c b/libs/video/rsx_vulkan_backend.c
  
  static void vk_present_wait_gpu(void);
  
-@@ -452,7 +771,8 @@
+@@ -452,7 +773,8 @@
   * results flushes them first, so everything else keeps the invariant that
   * all earlier work has completed. */
  static u32 s_eb_pending;
@@ -38324,7 +38776,7 @@ diff --git a/libs/video/rsx_vulkan_backend.c b/libs/video/rsx_vulkan_backend.c
  static int vk_eb_active(void);       /* batching decided on and on */
  static u32 vk_eb_max(void);
  static void vk_eb_recorded(void);   /* one more command in the open batch */
-@@ -460,14 +780,82 @@
+@@ -460,14 +782,82 @@
  static int vk_eb_upload(VkImage img, VkBufferImageCopy* region, const void* src, size_t tight,
                          u32 rows, u32 row_bytes);   /* -2: not batched, do it the old way */
  
@@ -38409,7 +38861,7 @@ diff --git a/libs/video/rsx_vulkan_backend.c b/libs/video/rsx_vulkan_backend.c
      memset(im, 0, sizeof *im);
  }
  
-@@ -525,7 +913,7 @@
+@@ -525,7 +915,7 @@
  
  static void vk_destroy_buffer(vk_buffer* b)
  {
@@ -38418,7 +38870,7 @@ diff --git a/libs/video/rsx_vulkan_backend.c b/libs/video/rsx_vulkan_backend.c
      if (b->ptr) pvkUnmapMemory(s_vk.device, b->mem);
      if (b->buf) pvkDestroyBuffer(s_vk.device, b->buf, NULL);
      if (b->mem) pvkFreeMemory(s_vk.device, b->mem, NULL);
-@@ -551,6 +939,7 @@
+@@ -551,6 +941,7 @@
   * -------------------------------------------------------------------------*/
  static VkResult vk_queue_submit(const VkSubmitInfo* si, VkFence fence)
  {
@@ -38426,7 +38878,7 @@ diff --git a/libs/video/rsx_vulkan_backend.c b/libs/video/rsx_vulkan_backend.c
      pthread_mutex_lock(&s_vk.queue_mu);
      const VkResult r = pvkQueueSubmit(s_vk.queue, 1, si, fence);
      pthread_mutex_unlock(&s_vk.queue_mu);
-@@ -575,8 +964,25 @@
+@@ -575,8 +966,25 @@
  
  /* A full execution and memory dependency on everything submitted before
   * this command buffer, the present's copy included. */
@@ -38452,7 +38904,7 @@ diff --git a/libs/video/rsx_vulkan_backend.c b/libs/video/rsx_vulkan_backend.c
      VkMemoryBarrier mb = { .sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER,
                             .srcAccessMask = VK_ACCESS_MEMORY_WRITE_BIT,
                             .dstAccessMask = VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT };
-@@ -584,9 +990,9 @@
+@@ -584,9 +992,9 @@
                            VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 1, &mb, 0, NULL, 0, NULL);
  }
  
@@ -38465,7 +38917,7 @@ diff --git a/libs/video/rsx_vulkan_backend.c b/libs/video/rsx_vulkan_backend.c
      VK_CHECK(pvkResetCommandBuffer(s_vk.cmd, 0), "vkResetCommandBuffer");
      VkCommandBufferBeginInfo bi = { .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
                                      .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT };
-@@ -595,25 +1001,65 @@
+@@ -595,25 +1003,65 @@
       * to draw over: order everything here after it. Set only by a present,
       * which never runs alongside the walker's recording. */
      if (s_vk.present_order) { vk_cmd_after_everything(s_vk.cmd); s_vk.present_order = 0; }
@@ -38534,7 +38986,7 @@ diff --git a/libs/video/rsx_vulkan_backend.c b/libs/video/rsx_vulkan_backend.c
      VkImageMemoryBarrier b = {
          .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
          .srcAccessMask = VK_ACCESS_MEMORY_WRITE_BIT,
-@@ -963,7 +1409,9 @@
+@@ -963,7 +1411,9 @@
      /* A 1x1 magenta dummy keeps the descriptor valid before any bind --
       * the same "not bound" colour the null backend's sampler returns. */
      static const u8 magenta[4] = { 0xFF, 0x00, 0xFF, 0xFF };
@@ -38545,7 +38997,7 @@ diff --git a/libs/video/rsx_vulkan_backend.c b/libs/video/rsx_vulkan_backend.c
      vk_write_texture_descriptor();
      return 0;
  }
-@@ -1151,7 +1599,9 @@
+@@ -1151,7 +1601,9 @@
  #define VK_FP_MAX_BYTES  4096u              /* bound on a fragment program, as Metal/D3D12 */
  #define VK_HLSL_BYTES    (256u * 1024u)
  #define VK_SPV_WORDS     (256u * 1024u)
@@ -38556,7 +39008,7 @@ diff --git a/libs/video/rsx_vulkan_backend.c b/libs/video/rsx_vulkan_backend.c
  #define VK_GUEST_ATTRS   16u
  #define VK_GUEST_FLOATS  (VK_GUEST_ATTRS * 4u)   /* per vertex */
  
-@@ -1714,9 +2164,28 @@
+@@ -1714,9 +2166,28 @@
      return v && v[0] && v[0] != '0';
  }
  
@@ -38586,7 +39038,7 @@ diff --git a/libs/video/rsx_vulkan_backend.c b/libs/video/rsx_vulkan_backend.c
      if (s_vk.device && pvkDeviceWaitIdle) {
          vk_device_idle();
          for (u32 i = 0; i < 8; i++)
-@@ -1725,6 +2194,9 @@
+@@ -1725,6 +2196,9 @@
                  s_vk.sc_done[i] = VK_NULL_HANDLE;
              }
          if (s_vk.sem_acquire) pvkDestroySemaphore(s_vk.device, s_vk.sem_acquire, NULL);
@@ -38596,7 +39048,7 @@ diff --git a/libs/video/rsx_vulkan_backend.c b/libs/video/rsx_vulkan_backend.c
          if (s_vk.swapchain && pvkDestroySwapchainKHR)
              pvkDestroySwapchainKHR(s_vk.device, s_vk.swapchain, NULL);
      }
-@@ -1742,6 +2214,14 @@
+@@ -1742,6 +2216,14 @@
      s_vk.windowed = 0;
  }
  
@@ -38611,7 +39063,7 @@ diff --git a/libs/video/rsx_vulkan_backend.c b/libs/video/rsx_vulkan_backend.c
  static void vk_window_open(const char* title)
  {
      if (!vk_env_on("PS3RECOMP_VK_WINDOW")) return;
-@@ -1749,11 +2229,42 @@
+@@ -1749,11 +2231,42 @@
          VK_LOG("window disabled, continuing headless: SDL video init failed: %s\n", SDL_GetError());
          return;
      }
@@ -38657,7 +39109,7 @@ diff --git a/libs/video/rsx_vulkan_backend.c b/libs/video/rsx_vulkan_backend.c
      s_vk.windowed = 1;          /* so vk_window_drop also shuts SDL video down */
      if (!s_vk.window) {
          char why[256];
-@@ -1761,6 +2272,18 @@
+@@ -1761,6 +2274,18 @@
          vk_window_drop(why);
          return;
      }
@@ -38676,7 +39128,7 @@ diff --git a/libs/video/rsx_vulkan_backend.c b/libs/video/rsx_vulkan_backend.c
      unsigned n = 0;
      if (!SDL_Vulkan_GetInstanceExtensions(s_vk.window, &n, NULL) || n == 0 || n > 16 ||
          !SDL_Vulkan_GetInstanceExtensions(s_vk.window, &n, s_vk.inst_exts)) {
-@@ -1776,6 +2299,68 @@
+@@ -1776,6 +2301,68 @@
             SDL_GetCurrentVideoDriver(), n);
  }
  
@@ -38745,7 +39197,7 @@ diff --git a/libs/video/rsx_vulkan_backend.c b/libs/video/rsx_vulkan_backend.c
  static int vk_create_swapchain(void)
  {
      VkSurfaceCapabilitiesKHR caps;
-@@ -1784,26 +2369,48 @@
+@@ -1784,26 +2371,48 @@
      if (!(caps.supportedUsageFlags & VK_IMAGE_USAGE_TRANSFER_DST_BIT)) {
          VK_LOG("swapchain images cannot be blit destinations\n"); return -1;
      }
@@ -38804,7 +39256,7 @@ diff --git a/libs/video/rsx_vulkan_backend.c b/libs/video/rsx_vulkan_backend.c
      VkFormatProperties fp;
      pvkGetPhysicalDeviceFormatProperties(s_vk.phys, fmt.format, &fp);
      if (!(fp.optimalTilingFeatures & VK_FORMAT_FEATURE_BLIT_DST_BIT)) {
-@@ -1821,6 +2428,19 @@
+@@ -1821,6 +2430,19 @@
          if (ext.height > caps.maxImageExtent.height) ext.height = caps.maxImageExtent.height;
      }
      if (!ext.width || !ext.height) { VK_LOG("window has no drawable area\n"); return -1; }
@@ -38824,7 +39276,7 @@ diff --git a/libs/video/rsx_vulkan_backend.c b/libs/video/rsx_vulkan_backend.c
  
      u32 count = caps.minImageCount + 1;
      if (caps.maxImageCount && count > caps.maxImageCount) count = caps.maxImageCount;
-@@ -1833,24 +2453,53 @@
+@@ -1833,24 +2455,53 @@
      for (size_t k = 0; k < 4; k++)
          if (caps.supportedCompositeAlpha & alphas[k]) { alpha = alphas[k]; break; }
  
@@ -38881,7 +39333,7 @@ diff --git a/libs/video/rsx_vulkan_backend.c b/libs/video/rsx_vulkan_backend.c
  
      u32 n = 0;
      VK_CHECK(pvkGetSwapchainImagesKHR(s_vk.device, sc, &n, NULL), "vkGetSwapchainImagesKHR");
-@@ -1867,33 +2516,465 @@
+@@ -1867,33 +2518,465 @@
          VK_CHECK(pvkCreateSemaphore(s_vk.device, &semi, NULL, &s_vk.sc_done[i]), "vkCreateSemaphore");
  
      s_vk.sc_extent = ext;
@@ -39357,7 +39809,7 @@ diff --git a/libs/video/rsx_vulkan_backend.c b/libs/video/rsx_vulkan_backend.c
      if (pvkResetCommandBuffer(cb, 0) != VK_SUCCESS) { VK_LOG("vkResetCommandBuffer (window) failed\n"); return; }
      VkCommandBufferBeginInfo bi = { .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
                                      .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT };
-@@ -1908,37 +2989,33 @@
+@@ -1908,37 +2991,33 @@
      };
      pvkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
                            0, 0, NULL, 0, NULL, 1, &b);
@@ -39411,7 +39863,7 @@ diff --git a/libs/video/rsx_vulkan_backend.c b/libs/video/rsx_vulkan_backend.c
  
      VkPresentInfoKHR pi = {
          .sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
-@@ -1946,16 +3023,853 @@
+@@ -1946,16 +3025,853 @@
          .swapchainCount = 1, .pSwapchains = &s_vk.swapchain, .pImageIndices = &idx,
      };
      r = vk_queue_present(&pi);
@@ -40269,7 +40721,7 @@ diff --git a/libs/video/rsx_vulkan_backend.c b/libs/video/rsx_vulkan_backend.c
          fwrite(rgba + i * 4, 1, 3, f);
      fclose(f);
  }
-@@ -1983,24 +3897,112 @@
+@@ -1983,24 +3899,112 @@
   * alongside the walker. */
  static void vk_present_wait_gpu(void)
  {
@@ -40388,7 +40840,7 @@ diff --git a/libs/video/rsx_vulkan_backend.c b/libs/video/rsx_vulkan_backend.c
  }
  
  /* present_mu held: a previous present finished, the present's command
-@@ -2022,27 +4024,36 @@
+@@ -2022,27 +4026,36 @@
  static void vk_present_record_end(VkCommandBuffer cb)
  {
      vk_barrier_image_on(cb, s_vk.color.img, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_GENERAL);
@@ -40442,7 +40894,7 @@ diff --git a/libs/video/rsx_vulkan_backend.c b/libs/video/rsx_vulkan_backend.c
      __atomic_store_n(&s_vk.present_inflight, 1, __ATOMIC_RELEASE);
      s_vk.present_order = 1;
      if (!(s_vk.present_split && s_vk.eng_active)) vk_present_complete_locked();
-@@ -2092,6 +4103,7 @@
+@@ -2092,6 +4105,7 @@
      u8       cube;                   /* TEXTURE: six layers, a CUBE view    */
      u8       snapshot;               /* COLOR: a feedback copy, never a target */
      u32      mips;                   /* TEXTURE: levels the image was created with */
@@ -40450,7 +40902,7 @@ diff --git a/libs/video/rsx_vulkan_backend.c b/libs/video/rsx_vulkan_backend.c
  } vk_eng_obj;
  
  static vk_eng_obj s_eobj[VK_ENG_MAX_OBJ];
-@@ -2126,12 +4138,14 @@
+@@ -2126,12 +4140,14 @@
  /* Colour formats the E2 passes render into: RGBA8 for ordinary and display
   * targets, RGBA16F for SET_SURFACE_FORMAT 0xB HDR targets. Both are required
   * colour attachment formats with blending in Vulkan 1.0. */
@@ -40466,7 +40918,7 @@ diff --git a/libs/video/rsx_vulkan_backend.c b/libs/video/rsx_vulkan_backend.c
      default:                            return -1;
      }
  }
-@@ -2294,12 +4308,14 @@
+@@ -2294,12 +4310,14 @@
  }
  
  static void vk_eng_snapshot_pool_drain(void);
@@ -40481,7 +40933,7 @@ diff --git a/libs/video/rsx_vulkan_backend.c b/libs/video/rsx_vulkan_backend.c
      vk_eb_release();
      vk_destroy_buffer(&s_rb_stage);
      vk_destroy_buffer(&s_up_stage);
-@@ -2308,7 +4324,7 @@
+@@ -2308,7 +4326,7 @@
  static void vk_eng_submit_and_wait(void* user, u32 reason)
  {
      (void)user; (void)reason;      /* every other submission has already completed */
@@ -40490,7 +40942,7 @@ diff --git a/libs/video/rsx_vulkan_backend.c b/libs/video/rsx_vulkan_backend.c
  }
  
  static u32 vk_eng_color_target_create(void* user, rsx_be_format fmt, u32 w, u32 h,
-@@ -2333,13 +4349,21 @@
+@@ -2333,13 +4351,21 @@
      }
      o->kind = VK_ENG_COLOR; o->fmt = vf; o->bpp = bpp; o->w = w; o->h = h;
      /* UNDEFINED -> GENERAL, then the guest's own bytes when the engine could
@@ -40515,7 +40967,7 @@ diff --git a/libs/video/rsx_vulkan_backend.c b/libs/video/rsx_vulkan_backend.c
      if (seed && seed_row_bytes)
          vk_eng_upload(o->im.img, 0, 0, w, h, bpp, seed, seed_row_bytes);
      return hd;
-@@ -2359,18 +4383,24 @@
+@@ -2359,18 +4385,24 @@
          vk_destroy_image(&o->im); return 0;
      }
      o->kind = VK_ENG_DEPTH; o->fmt = s_vk.depth_format; o->w = w; o->h = h;
@@ -40543,7 +40995,7 @@ diff --git a/libs/video/rsx_vulkan_backend.c b/libs/video/rsx_vulkan_backend.c
      (void)user;
      if (count > RSX_BE_MAX_COLOR_TARGETS) count = RSX_BE_MAX_COLOR_TARGETS;
      for (u32 i = 0; i < RSX_BE_MAX_COLOR_TARGETS; i++)
-@@ -2419,30 +4449,316 @@
+@@ -2419,30 +4451,316 @@
      else vk_submit_and_wait();
  }
  
@@ -40865,7 +41317,7 @@ diff --git a/libs/video/rsx_vulkan_backend.c b/libs/video/rsx_vulkan_backend.c
          }
          vk_present_record_end(cb);
      }
-@@ -2466,6 +4782,7 @@
+@@ -2466,6 +4784,7 @@
  static void vk_eng_readback(void* user, u32 surface, u32 x, u32 y, u32 w, u32 h,
                              void* out, u32 out_pitch)
  {
@@ -40873,7 +41325,7 @@ diff --git a/libs/video/rsx_vulkan_backend.c b/libs/video/rsx_vulkan_backend.c
      (void)user;
      vk_eng_obj* o = vk_eng_get(surface, VK_ENG_COLOR);
      if (!o || !out || !out_pitch || !w || !h || x + w > o->w || y + h > o->h) return;
-@@ -2495,23 +4812,162 @@
+@@ -2495,23 +4814,162 @@
      }
  }
  
@@ -41041,7 +41493,7 @@ diff --git a/libs/video/rsx_vulkan_backend.c b/libs/video/rsx_vulkan_backend.c
      const int cube = (faces == 6);
      if ((faces != 1 && !cube) || (cube && w != h)) return 0;   /* cube faces are square */
      if (!mips) mips = 1;
-@@ -2527,35 +4983,73 @@
+@@ -2527,35 +4985,73 @@
          .sharingMode = VK_SHARING_MODE_EXCLUSIVE, .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED };
      VkMemoryRequirements req;
      u32 type;
@@ -41129,7 +41581,7 @@ diff --git a/libs/video/rsx_vulkan_backend.c b/libs/video/rsx_vulkan_backend.c
      /* A BC row is a row of 4x4 blocks; the engine's `rows` already counts them. */
      const size_t tight = o->block ? (size_t)((w + 3u) / 4u) * o->block : (size_t)w * o->bpp;
      vk_eng_upload_rows(o->im.img, face, mip, w, h, tight, rows, src, row_bytes);
-@@ -2622,8 +5116,205 @@
+@@ -2622,8 +5118,205 @@
      vk_destroy_buffer(&s_snap_st);
  }
  
@@ -41335,7 +41787,7 @@ diff --git a/libs/video/rsx_vulkan_backend.c b/libs/video/rsx_vulkan_backend.c
      (void)user;
      const vk_eng_obj* t = vk_eng_get(surface, VK_ENG_COLOR);
      if (!t || t->snapshot) return 0;
-@@ -2676,6 +5367,7 @@
+@@ -2676,6 +5369,7 @@
   * invalidates and asks again; it goes when the depth target goes. */
  static u32 vk_eng_depth_snapshot(void* user, u32 depth, u32 w, u32 h)
  {
@@ -41343,7 +41795,7 @@ diff --git a/libs/video/rsx_vulkan_backend.c b/libs/video/rsx_vulkan_backend.c
      vk_eng_obj* z = vk_eng_get(depth, VK_ENG_DEPTH);
      if (!z) return 0;
      if (s_vk.depth_format != VK_FORMAT_D32_SFLOAT &&
-@@ -2746,17 +5438,276 @@
+@@ -2746,17 +5440,276 @@
          pvkCmdCopyBufferToImage(s_vk.cmd, st.buf, t->im.img, VK_IMAGE_LAYOUT_GENERAL, 1, &in);
          if (batch) {
              vk_barrier_image(t->im.img, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_GENERAL);
@@ -41621,7 +42073,7 @@ diff --git a/libs/video/rsx_vulkan_backend.c b/libs/video/rsx_vulkan_backend.c
      (void)user;
      vk_eng_obj* z = vk_eng_get(depth, VK_ENG_DEPTH);
      if (!z || !out || !w || !h || x + w > z->w || y + h > z->h ||
-@@ -2819,14 +5770,40 @@
+@@ -2819,14 +5772,40 @@
      rsx_be_render_state rs;
      u32                 nslots, stride, rt_count;
      VkFormat            rt_fmt;          /* picks the render pass it is built against */
@@ -41662,7 +42114,7 @@ diff --git a/libs/video/rsx_vulkan_backend.c b/libs/video/rsx_vulkan_backend.c
      struct { u32 key[RSX_BE_MAX_COLOR_TARGETS + 1]; VkFramebuffer fb; } fb[VK_ENG_FB_CACHE];
      u32          fb_count;
      vk_image     scratch_depth;                          /* when no zeta is bound */
-@@ -2834,6 +5811,8 @@
+@@ -2834,6 +5813,8 @@
      u32          pipeline;
      u32          vs_bytes, ps_bytes;
      u8*          ucpu;                /* the constants, in the shared UBO's layout */
@@ -41671,7 +42123,7 @@ diff --git a/libs/video/rsx_vulkan_backend.c b/libs/video/rsx_vulkan_backend.c
      u32          tex[RSX_BE_MAX_TEXTURES];
      rsx_be_sampler_desc samp[RSX_BE_MAX_TEXTURES];
      u32          tex_mask;
-@@ -2842,6 +5821,7 @@
+@@ -2842,6 +5823,7 @@
      int          have_vp, have_sc;
      u32          stencil_ref;
      float        depth_bounds[2];     /* min, max for the next draw */
@@ -41679,7 +42131,7 @@ diff --git a/libs/video/rsx_vulkan_backend.c b/libs/video/rsx_vulkan_backend.c
      vk_buffer    indices;
      u32          warned;
      /* The split set layout (vk_eng_split_layout) and its one set, made the
-@@ -2860,7 +5840,17 @@
+@@ -2860,7 +5842,17 @@
  
  static void vk_eng_drop_framebuffers(void)
  {
@@ -41698,7 +42150,7 @@ diff --git a/libs/video/rsx_vulkan_backend.c b/libs/video/rsx_vulkan_backend.c
      for (u32 i = 0; i < s_e2.fb_count; i++)
          if (s_e2.fb[i].fb) pvkDestroyFramebuffer(s_vk.device, s_e2.fb[i].fb, NULL);
      s_e2.fb_count = 0;
-@@ -2900,6 +5890,34 @@
+@@ -2900,6 +5892,34 @@
          s_e2.rp[fi][n] = VK_NULL_HANDLE;
      return s_e2.rp[fi][n];
  }
@@ -41733,7 +42185,7 @@ diff --git a/libs/video/rsx_vulkan_backend.c b/libs/video/rsx_vulkan_backend.c
  
  /* Tables carried from the Metal backend, itself copied from the D3D12 live
   * draw engine a title has shipped on. */
-@@ -2958,17 +5976,313 @@
+@@ -2958,17 +5978,313 @@
      return s;
  }
  
@@ -42056,7 +42508,7 @@ diff --git a/libs/video/rsx_vulkan_backend.c b/libs/video/rsx_vulkan_backend.c
  }
  
  /* A pixel program with a cube unit declares all sixteen units one by one
-@@ -3015,16 +6329,465 @@
+@@ -3015,16 +6331,465 @@
      return s_e2.split_pipe_layout;
  }
  
@@ -42527,7 +42979,7 @@ diff --git a/libs/video/rsx_vulkan_backend.c b/libs/video/rsx_vulkan_backend.c
  }
  
  static u32 vk_eng_pipeline_create(void* user, const char* vs_hlsl, const char* ps_hlsl,
-@@ -3040,10 +6803,14 @@
+@@ -3040,10 +6805,14 @@
          if (!(s_e2.warned & 1u)) { VK_LOG("engine: colour format %d not supported yet\n", (int)rt_fmt); s_e2.warned |= 1u; }
          return 0;
      }
@@ -42543,7 +42995,7 @@ diff --git a/libs/video/rsx_vulkan_backend.c b/libs/video/rsx_vulkan_backend.c
      if (slot == VK_ENG_MAX_PIPE) {
          if (!(s_e2.warned & 128u)) {
              VK_LOG("engine: pipeline table full (%u), draws will drop\n", (unsigned)VK_ENG_MAX_PIPE);
-@@ -3053,32 +6820,115 @@
+@@ -3053,32 +6822,115 @@
      }
      vk_eng_pipe* P = &s_epipe[slot];
      memset(P, 0, sizeof *P);
@@ -42660,7 +43112,7 @@ diff --git a/libs/video/rsx_vulkan_backend.c b/libs/video/rsx_vulkan_backend.c
  }
  
  static VkPipeline vk_eng_variant(vk_eng_pipe* P, u32 topo_idx)
-@@ -3088,7 +6938,7 @@
+@@ -3088,7 +6940,7 @@
          VK_PRIMITIVE_TOPOLOGY_LINE_STRIP, VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
          VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP };
      if (P->variant[topo_idx]) return P->variant[topo_idx];
@@ -42669,7 +43121,7 @@ diff --git a/libs/video/rsx_vulkan_backend.c b/libs/video/rsx_vulkan_backend.c
      if (!rp || P->nslots > VK_GUEST_ATTRS) return VK_NULL_HANDLE;
      const VkPipelineLayout layout = P->cube_mask ? vk_eng_split_layout() : s_g.pipe_layout;
      if (!layout) return VK_NULL_HANDLE;
-@@ -3125,6 +6975,8 @@
+@@ -3125,6 +6977,8 @@
                                                                             : VK_CULL_MODE_BACK_BIT,
          .frontFace = (rs->front_face == 0x0901u) ? VK_FRONT_FACE_COUNTER_CLOCKWISE
                                                   : VK_FRONT_FACE_CLOCKWISE,
@@ -42678,7 +43130,7 @@ diff --git a/libs/video/rsx_vulkan_backend.c b/libs/video/rsx_vulkan_backend.c
          .lineWidth = 1.0f };
      VkPipelineMultisampleStateCreateInfo ms = {
          .sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
-@@ -3191,26 +7043,40 @@
+@@ -3191,26 +7045,40 @@
              .dstAlphaBlendFactor = vk_gcm_blend_factor(rs->df_a),
              .alphaBlendOp = vk_gcm_blend_op(rs->eq_a),
              .colorWriteMask = twm };
@@ -42724,7 +43176,7 @@ diff --git a/libs/video/rsx_vulkan_backend.c b/libs/video/rsx_vulkan_backend.c
      return P->variant[topo_idx];
  }
  
-@@ -3218,11 +7084,14 @@
+@@ -3218,11 +7086,14 @@
  
  static void vk_eng2_shutdown(void* user)
  {
@@ -42740,7 +43192,7 @@ diff --git a/libs/video/rsx_vulkan_backend.c b/libs/video/rsx_vulkan_backend.c
      vk_destroy_image(&s_e2.scratch_depth);
      vk_destroy_buffer(&s_e2.indices);
      if (s_e2.split_pipe_layout) pvkDestroyPipelineLayout(s_vk.device, s_e2.split_pipe_layout, NULL);
-@@ -3248,24 +7117,27 @@
+@@ -3248,24 +7119,27 @@
  static void vk_eng_bind_vs_constants(void* user, const void* data, u32 bytes)
  {
      (void)user;
@@ -42772,7 +43224,7 @@ diff --git a/libs/video/rsx_vulkan_backend.c b/libs/video/rsx_vulkan_backend.c
      (void)user;
      for (u32 u = 0; u < RSX_BE_MAX_TEXTURES; u++) {
          const int on = (mask >> u) & 1u;
-@@ -3305,6 +7177,21 @@
+@@ -3305,6 +7179,21 @@
      (void)user;
      s_e2.depth_bounds[0] = vk_depth_bound(min, 0.0f);
      s_e2.depth_bounds[1] = vk_depth_bound(max, 1.0f);
@@ -42794,7 +43246,7 @@ diff --git a/libs/video/rsx_vulkan_backend.c b/libs/video/rsx_vulkan_backend.c
  }
  
  static VkFramebuffer vk_eng_framebuffer(VkRenderPass rp, const u32* rt, u32 n, VkImageView dview,
-@@ -3360,18 +7247,93 @@
+@@ -3360,18 +7249,93 @@
      return s_e2.indices.coherent ? 0 : -1;
  }
  
@@ -42890,7 +43342,7 @@ diff --git a/libs/video/rsx_vulkan_backend.c b/libs/video/rsx_vulkan_backend.c
      float min_lod = d->min_lod, max_lod = d->mip_present ? d->max_lod : d->min_lod;
      if (max_lod < min_lod) max_lod = min_lod;
      VkSamplerCreateInfo sci = {
-@@ -3379,16 +7341,26 @@
+@@ -3379,16 +7343,26 @@
          .magFilter = d->mag_linear ? VK_FILTER_LINEAR : VK_FILTER_NEAREST,
          .minFilter = d->min_linear ? VK_FILTER_LINEAR : VK_FILTER_NEAREST,
          .mipmapMode = d->mip_linear ? VK_SAMPLER_MIPMAP_MODE_LINEAR : VK_SAMPLER_MIPMAP_MODE_NEAREST,
@@ -42920,7 +43372,7 @@ diff --git a/libs/video/rsx_vulkan_backend.c b/libs/video/rsx_vulkan_backend.c
  
  /* The view a bound engine handle samples through: an uploaded texture, a
   * colour target (bound directly when surface_view was not asked), or a view.
-@@ -3410,11 +7382,13 @@
+@@ -3410,11 +7384,13 @@
  {
      if (!vk_eng_get(s_e2.dummy_cube, VK_ENG_TEXTURE)) {
          static const u8 magenta[4] = { 0xFF, 0x00, 0xFF, 0xFF };
@@ -42935,7 +43387,7 @@ diff --git a/libs/video/rsx_vulkan_backend.c b/libs/video/rsx_vulkan_backend.c
      }
      return s_eobj[s_e2.dummy_cube].im.view;
  }
-@@ -3451,6 +7425,8 @@
+@@ -3451,6 +7427,8 @@
      u32              sets;
      unsigned long long draws, flushes;
  } s_eb = { .on = -1 };
@@ -42944,7 +43396,7 @@ diff --git a/libs/video/rsx_vulkan_backend.c b/libs/video/rsx_vulkan_backend.c
  
  static int vk_eb_on(void)
  {
-@@ -3481,6 +7457,24 @@
+@@ -3481,6 +7459,24 @@
      }
      VK_LOG("draw batching: on (up to %u draws per submission)\n", s_eb.max_draws);
      s_eb.on = 1;
@@ -42969,7 +43421,7 @@ diff --git a/libs/video/rsx_vulkan_backend.c b/libs/video/rsx_vulkan_backend.c
      return 1;
  }
  
-@@ -3488,11 +7482,23 @@
+@@ -3488,11 +7484,23 @@
   * decides again. Also frees what a failed vk_eb_on had already created. */
  static void vk_eb_release(void)
  {
@@ -42994,7 +43446,7 @@ diff --git a/libs/video/rsx_vulkan_backend.c b/libs/video/rsx_vulkan_backend.c
      if (s_eb.pool) pvkDestroyDescriptorPool(s_vk.device, s_eb.pool, NULL);
      memset(&s_eb, 0, sizeof s_eb);
      s_eb.on = -1;
-@@ -3500,9 +7506,11 @@
+@@ -3500,9 +7508,11 @@
  
  static int vk_eb_active(void) { return s_eb.on == 1; }
  static u32 vk_eb_max(void) { return s_eb.max_draws; }
@@ -43007,7 +43459,7 @@ diff --git a/libs/video/rsx_vulkan_backend.c b/libs/video/rsx_vulkan_backend.c
  
  /* A texture upload as one more batched operation: rows staged in the ring, the
   * copy recorded behind a full memory barrier (earlier draws of the batch may
-@@ -3514,11 +7522,11 @@
+@@ -3514,11 +7524,11 @@
  {
      if (!vk_eb_active()) return -2;
      const VkDeviceSize bytes = (VkDeviceSize)tight * rows;
@@ -43023,7 +43475,7 @@ diff --git a/libs/video/rsx_vulkan_backend.c b/libs/video/rsx_vulkan_backend.c
          if (off == (VkDeviceSize)-1) return -2;
      }
      for (u32 y = 0; y < rows; y++)
-@@ -3528,15 +7536,117 @@
+@@ -3528,15 +7538,117 @@
      region->bufferOffset = off;
      pvkCmdCopyBufferToImage(s_vk.cmd, s_eb.sb.buf, img, VK_IMAGE_LAYOUT_GENERAL, 1, region);
      vk_barrier_image(img, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_GENERAL);
@@ -43145,7 +43597,7 @@ diff --git a/libs/video/rsx_vulkan_backend.c b/libs/video/rsx_vulkan_backend.c
      s_eb.vb_head = s_eb.ib_head = s_eb.ub_head = s_eb.sb_head = 0;
      if (s_eb.sets) { pvkResetDescriptorPool(s_vk.device, s_eb.pool, 0); s_eb.sets = 0; }
      if ((++s_eb.flushes & 0x3FFFu) == 0)
-@@ -3579,6 +7689,23 @@
+@@ -3579,6 +7691,23 @@
          const int cube = (P->cube_mask >> u) & 1u;
          VkImageView v = ((s_e2.tex_mask >> u) & 1u) ? vk_eng_sample_view(s_e2.tex[u], cube)
                                                       : VK_NULL_HANDLE;
@@ -43169,7 +43621,7 @@ diff --git a/libs/video/rsx_vulkan_backend.c b/libs/video/rsx_vulkan_backend.c
          VkSampler smp = v ? vk_eng_sampler(&s_e2.samp[u]) : s_vk.sampler;
          ii[u] = (VkDescriptorImageInfo){ VK_NULL_HANDLE,
                                           v ? v : (cube ? dummy_cube : s_vk.dummy.view),
-@@ -3610,14 +7737,99 @@
+@@ -3610,14 +7739,99 @@
      return set;
  }
  
@@ -43272,7 +43724,7 @@ diff --git a/libs/video/rsx_vulkan_backend.c b/libs/video/rsx_vulkan_backend.c
  
      /* Targets: every member of a set is target A's size (engine contract). */
      const u32 n = s_eng_bound.nrt;
-@@ -3636,60 +7848,72 @@
+@@ -3636,60 +7850,72 @@
      const u32 w = rt0->w, h = rt0->h;
      vk_eng_obj* zo = vk_eng_get(s_eng_bound.depth, VK_ENG_DEPTH);
      VkImageView dview = (zo && zo->w >= w && zo->h >= h) ? zo->im.view : vk_eng_scratch_depth(w, h);
@@ -43363,7 +43815,7 @@ diff --git a/libs/video/rsx_vulkan_backend.c b/libs/video/rsx_vulkan_backend.c
      } else {
          if (s_eb_pending) vk_eng_flush();
          if (vk_ensure_vertex_buffer(vbytes)) return;
-@@ -3700,20 +7924,23 @@
+@@ -3700,20 +7926,23 @@
          }
          vbuf = s_vk.vertices.buf; ibuf = s_e2.indices.buf; voff = ioff = 0;
          if (!vk_eng_ucpu()) return;
@@ -43397,7 +43849,7 @@ diff --git a/libs/video/rsx_vulkan_backend.c b/libs/video/rsx_vulkan_backend.c
      pvkCmdBindPipeline(s_vk.cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipe);
      VkViewport vp = { 0.0f, 0.0f, (float)w, (float)h, 0.0f, 1.0f };
      if (s_e2.have_vp && s_e2.vp[2] > 0.0f && s_e2.vp[3] > 0.0f) {
-@@ -3733,23 +7960,149 @@
+@@ -3733,23 +7962,149 @@
      pvkCmdSetStencilReference(s_vk.cmd, VK_STENCIL_FACE_FRONT_AND_BACK, s_e2.stencil_ref & 0xFFu);
      if (s_vk.depth_bounds_ok)
          pvkCmdSetDepthBounds(s_vk.cmd, s_e2.depth_bounds[0], s_e2.depth_bounds[1]);
@@ -43555,7 +44007,7 @@ diff --git a/libs/video/rsx_vulkan_backend.c b/libs/video/rsx_vulkan_backend.c
      .user                 = NULL,
      .init                 = vk_eng_init,
      .shutdown             = vk_eng_shutdown,
-@@ -3763,6 +8116,12 @@
+@@ -3763,6 +8118,12 @@
      .depth_target_create  = vk_eng_depth_target_create,
      .depth_target_release = vk_eng_release,
      .depth_snapshot       = vk_eng_depth_snapshot,
@@ -43568,7 +44020,7 @@ diff --git a/libs/video/rsx_vulkan_backend.c b/libs/video/rsx_vulkan_backend.c
      .color_snapshot       = vk_eng_color_snapshot,
      .pipeline_create      = vk_eng_pipeline_create,
      .pipeline_release     = vk_eng_pipeline_release,
-@@ -3775,6 +8134,7 @@
+@@ -3775,6 +8136,7 @@
      .set_viewport         = vk_eng_set_viewport,
      .set_scissor          = vk_eng_set_scissor,
      .set_stencil_ref      = vk_eng_set_stencil_ref,
@@ -43576,7 +44028,7 @@ diff --git a/libs/video/rsx_vulkan_backend.c b/libs/video/rsx_vulkan_backend.c
      .set_depth_bounds     = vk_eng_set_depth_bounds,
      .draw                 = vk_eng_draw,
      .clear_color          = vk_eng_clear_color,
-@@ -3786,6 +8146,32 @@
+@@ -3786,6 +8148,32 @@
      /* Every draw and every upload submits and waits, so an upload runs after
       * each earlier draw that sampled the old bytes has completed. */
      .texture_upload_ordered = 1,
@@ -43609,7 +44061,7 @@ diff --git a/libs/video/rsx_vulkan_backend.c b/libs/video/rsx_vulkan_backend.c
  };
  
  static rsx_backend s_vulkan_backend = {
-@@ -3807,16 +8193,32 @@
+@@ -3807,16 +8195,32 @@
  {
      pthread_mutex_init(&s_vk.queue_mu, NULL);
      pthread_mutex_init(&s_vk.present_mu, NULL);
@@ -43642,7 +44094,7 @@ diff --git a/libs/video/rsx_vulkan_backend.c b/libs/video/rsx_vulkan_backend.c
      if (vk_load_library()) return -1;
  
      VkApplicationInfo app = { .sType = VK_STRUCTURE_TYPE_APPLICATION_INFO,
-@@ -3824,11 +8226,50 @@
+@@ -3824,11 +8228,50 @@
                                .apiVersion = VK_API_VERSION_1_0 };
      VkInstanceCreateInfo ci = { .sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
                                  .pApplicationInfo = &app };
@@ -43697,7 +44149,7 @@ diff --git a/libs/video/rsx_vulkan_backend.c b/libs/video/rsx_vulkan_backend.c
      if (ir != VK_SUCCESS && s_vk.windowed) {
          vk_window_drop("vkCreateInstance with the surface extensions failed");
          ci.enabledExtensionCount = 0;
-@@ -3862,29 +8303,93 @@
+@@ -3862,29 +8305,93 @@
      VkPhysicalDeviceFeatures have, want;
      memset(&want, 0, sizeof want);
      pvkGetPhysicalDeviceFeatures(s_vk.phys, &have);
@@ -43795,7 +44247,7 @@ diff --git a/libs/video/rsx_vulkan_backend.c b/libs/video/rsx_vulkan_backend.c
  
      VkCommandPoolCreateInfo pci = { .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
                                      .flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,
-@@ -3907,12 +8412,15 @@
+@@ -3907,12 +8414,15 @@
      if (vk_pick_depth_format()) return -1;
      if (vk_create_image(&s_vk.color, VK_FORMAT_R8G8B8A8_UNORM, s_vk.width, s_vk.height,
                          VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT |
@@ -43812,7 +44264,7 @@ diff --git a/libs/video/rsx_vulkan_backend.c b/libs/video/rsx_vulkan_backend.c
      if (vk_create_render_pass()) return -1;
      if (vk_create_pipeline_objects()) return -1;
      if (vk_guest_init()) {
-@@ -3945,6 +8453,167 @@
+@@ -3945,6 +8455,167 @@
      return 0;
  }
  
@@ -43980,7 +44432,7 @@ diff --git a/libs/video/rsx_vulkan_backend.c b/libs/video/rsx_vulkan_backend.c
  int rsx_vulkan_backend_init(u32 width, u32 height, const char* title)
  {
      memset(&s_vk, 0, sizeof s_vk);
-@@ -3961,6 +8630,17 @@
+@@ -3961,6 +8632,17 @@
       * pipeline from the guest's programs, so without them it has nothing to
       * draw with, and the vtable's fixed-function path stays the default.
       * Either way PS3RECOMP_RSX_ENGINE=dispatch|vtable overrides. */
@@ -43998,7 +44450,7 @@ diff --git a/libs/video/rsx_vulkan_backend.c b/libs/video/rsx_vulkan_backend.c
      rsx_draw_engine_set_backend(&s_vk_engine_backend);
      rsx_draw_engine_set_default(s_g.on ? 1 : 0);
      if (rsx_draw_engine_enabled() && rsx_draw_engine_init(s_vk.width, s_vk.height) == 0)
-@@ -3970,15 +8650,29 @@
+@@ -3970,15 +8652,29 @@
      VK_LOG("%s path\n", s_vk.eng_active ? "register-file draw engine" : "vtable");
      VK_LOG("offscreen target %ux%u ready, depth format %d (%s)\n",
             s_vk.width, s_vk.height, (int)s_vk.depth_format, title ? title : "");
@@ -44028,7 +44480,7 @@ diff --git a/libs/video/rsx_vulkan_backend.c b/libs/video/rsx_vulkan_backend.c
      if (s_vk.windowed && s_vk.swapchain && s_vk.presented && s_vk.hold_seconds > 0.0) {
          VK_LOG("holding the last frame on screen for %.1f s "
                 "(Esc or closing the window ends it early)\n", s_vk.hold_seconds);
-@@ -3986,6 +8680,7 @@
+@@ -3986,6 +8682,7 @@
          while (s_vk.windowed && !SDL_TICKS_PASSED(SDL_GetTicks(), end)) {
              if (rsx_vulkan_backend_pump_messages() != 0) break;
              vk_present_window();         /* FIFO: paced by the display */
@@ -44036,7 +44488,7 @@ diff --git a/libs/video/rsx_vulkan_backend.c b/libs/video/rsx_vulkan_backend.c
          }
      }
      if (s_vk.windowed || s_vk.window) vk_window_drop(NULL);
-@@ -4014,6 +8709,7 @@
+@@ -4014,6 +8711,7 @@
          if (s_vk.pool)  pvkDestroyCommandPool(s_vk.device, s_vk.pool, NULL);
          if (s_vk.present_fence) pvkDestroyFence(s_vk.device, s_vk.present_fence, NULL);
          if (s_vk.window_fence)  pvkDestroyFence(s_vk.device, s_vk.window_fence, NULL);
@@ -44044,7 +44496,7 @@ diff --git a/libs/video/rsx_vulkan_backend.c b/libs/video/rsx_vulkan_backend.c
          if (s_vk.present_pool)  pvkDestroyCommandPool(s_vk.device, s_vk.present_pool, NULL);
          pvkDestroyDevice(s_vk.device, NULL);
      }
-@@ -4025,22 +8721,104 @@
+@@ -4025,22 +8723,104 @@
      memset(&s_vk, 0, sizeof s_vk);
  }
  
@@ -44151,7 +44603,7 @@ diff --git a/libs/video/rsx_vulkan_backend.c b/libs/video/rsx_vulkan_backend.c
  }
  
  void rsx_vulkan_backend_present_begin(void)
-@@ -4054,6 +8832,7 @@
+@@ -4054,6 +8834,7 @@
  
  void rsx_vulkan_backend_present_finish(void)
  {
@@ -44159,7 +44611,7 @@ diff --git a/libs/video/rsx_vulkan_backend.c b/libs/video/rsx_vulkan_backend.c
      if (!s_vk.device) return;
      pthread_mutex_lock(&s_vk.present_mu);
      vk_present_complete_locked();
-@@ -4083,4 +8862,4 @@
+@@ -4083,4 +8864,4 @@
      return s_vk.eng_active && s_vk.depth_bounds_ok;
  }
  
@@ -45371,7 +45823,7 @@ diff --git a/runtime/ppu/tests/boot_main.cpp b/runtime/ppu/tests/boot_main.cpp
      }
      if (!ea || ea == 0xFFFFFFFFu ||
          (uint64_t)ea + min_bytes > 0x100000000ull) return nullptr;
-@@ -446,8 +564,68 @@
+@@ -446,8 +564,77 @@
  
  extern "C" const char* cellGame_get_title(void);   /* PARAM.SFO TITLE, for the caption */
  
@@ -45432,6 +45884,15 @@ diff --git a/runtime/ppu/tests/boot_main.cpp b/runtime/ppu/tests/boot_main.cpp
 +        sum = 0; n = 0; t_last = c.QuadPart;
 +    }
 +}
++/* A build made with -fprofile-generate (a profile-guided build's first stage) writes its counts in
++ * an atexit handler, which _exit and TerminateProcess skip: write them first. A weak reference, so
++ * any other build links without the profile runtime and this does nothing. */
++#if defined(__clang__) && !defined(_WIN32)
++extern "C" int __llvm_profile_write_file(void) __attribute__((weak));
++static void ps3_profile_flush(void) { if (__llvm_profile_write_file) __llvm_profile_write_file(); }
++#else
++static void ps3_profile_flush(void) {}
++#endif
 +
 +#include "ps3emu/thread_name.h"   /* ps3_thread_on_fast_cores */
  static DWORD WINAPI vblank_ticker(LPVOID)
@@ -45440,7 +45901,7 @@ diff --git a/runtime/ppu/tests/boot_main.cpp b/runtime/ppu/tests/boot_main.cpp
      /* Window caption: $PS3_TITLE wins, else the TITLE field PARAM.SFO already
       * gave cellGame, else a neutral name. It used to fall back to a specific
       * other title, so every port announced itself as that game. */
-@@ -461,21 +639,43 @@
+@@ -461,21 +648,43 @@
       * backbuffer when its clip EQUALS the backend size, so a title that renders
       * into something other than 1280x720 must say so: RSX_W / RSX_H. */
      uint32_t rsx_w = 1280, rsx_h = 720;
@@ -45487,7 +45948,7 @@ diff --git a/runtime/ppu/tests/boot_main.cpp b/runtime/ppu/tests/boot_main.cpp
          rsx_ok = (rsx_backend_init(rsx_w, rsx_h, _title) == 0);
      }
      fprintf(stderr, "[rsx] backend init %s\n", rsx_ok ? "OK -- window open" : "FAILED");
-@@ -485,7 +685,16 @@
+@@ -485,7 +694,16 @@
       * window DXGI Present throttles hard, which previously stalled these ticks and
       * paced the game's main loop to ~0.5fps. Drive the ticks off REAL elapsed time
       * and catch up in a bounded burst so present latency never slows the game. */
@@ -45505,7 +45966,7 @@ diff --git a/runtime/ppu/tests/boot_main.cpp b/runtime/ppu/tests/boot_main.cpp
      for (;;) {
          /* Was Sleep(4). The FIFO kick event existed, was signalled on a dry
           * fence queue, and had no waiter -- so a guest starved for `get` or a
-@@ -494,8 +703,9 @@
+@@ -494,8 +712,9 @@
           * does. */
          cellGcm_fifo_kick_wait(4);
          ULONGLONG now = GetTickCount64();
@@ -45516,7 +45977,7 @@ diff --git a/runtime/ppu/tests/boot_main.cpp b/runtime/ppu/tests/boot_main.cpp
              cellGcmTickVBlank();
              cellGcmTickFlip();
              /* Present a pending flip BEFORE draining further: the flip fires
-@@ -505,8 +715,8 @@
+@@ -505,8 +724,8 @@
               * writes and showed empty or mixed batches. */
              {
                  if (rsx_ok && cellGcm_take_flip_pending()) {
@@ -45527,7 +45988,7 @@ diff --git a/runtime/ppu/tests/boot_main.cpp b/runtime/ppu/tests/boot_main.cpp
                  }
              }
              /* Drain the game's GCM FIFO every tick -- this writes the RSX sync-fence
-@@ -514,20 +724,21 @@
+@@ -514,20 +733,21 @@
               * Doing it here (not after present) keeps those fences advancing at 60Hz
               * even when present() throttles on a hidden/occluded window. */
              if (rsx_ok) cellGcm_rsx_process_fifo();
@@ -45553,7 +46014,7 @@ diff --git a/runtime/ppu/tests/boot_main.cpp b/runtime/ppu/tests/boot_main.cpp
          }
          /* YDKJ_INJECT_Q3: the main thread polls q3 (load/state-complete) each frame but
           * it's never posted (producer signals a condvar, never enqueues). Inject a q3
-@@ -538,7 +749,24 @@
+@@ -538,7 +758,25 @@
              if(++s_q3 % 8 == 0){ int r=sys_event_queue_inject(qid, 0x1234, 0, 0, 0);
                static int _n=0; if(_n++<12) fprintf(stderr,"[INJQ3] injected q%u event rc=%d\n",qid,r); } }
          if (rsx_ok) {
@@ -45563,6 +46024,7 @@ diff --git a/runtime/ppu/tests/boot_main.cpp b/runtime/ppu/tests/boot_main.cpp
 +            if (rsx_pump_messages() != 0) {
 +                fprintf(stderr, "[rsx] window closed, exiting\n");
 +                fflush(stderr); fflush(stdout);
++                ps3_profile_flush();   /* a profile-recording build: before the exit skips atexit */
 +#ifdef _WIN32
 +                /* [win] cleanly: the pads' motors off, a save in flight let finish, every open file
 +                 * flushed (PS3_EXIT_CLEAN=0: at once, as before). The window's own quit
@@ -45579,7 +46041,7 @@ diff --git a/runtime/ppu/tests/boot_main.cpp b/runtime/ppu/tests/boot_main.cpp
              if (getenv("YDKJ_PACETRACE")) {
                  static ULONGLONG s_win=0; static int s_pf=0, s_pres=0; static ULONGLONG s_presms=0;
                  s_pf += fired; s_pres++;
-@@ -557,9 +785,9 @@
+@@ -557,9 +795,9 @@
                   * flash a partial frame (clear + a few draws). Before the
                   * first flip present freely so the window isn't stuck white
                   * during boot. */
@@ -45591,7 +46053,7 @@ diff --git a/runtime/ppu/tests/boot_main.cpp b/runtime/ppu/tests/boot_main.cpp
                      last_flip = fc;
                  } else if (fc == 0) {
                      rsx_backend_present();
-@@ -601,6 +829,8 @@
+@@ -601,6 +839,8 @@
  
  extern "C" const char* g_hle_inflight[];   /* ppu_hle.cpp; 64 entries */
  extern "C" void ppu_report_guest_lrs(void); /* ppu_loader.cpp */
@@ -45600,7 +46062,7 @@ diff --git a/runtime/ppu/tests/boot_main.cpp b/runtime/ppu/tests/boot_main.cpp
  
  static void dump_threads(const char* label, HMODULE self)
  {
-@@ -934,45 +1164,45 @@
+@@ -934,45 +1174,45 @@
              dump_threads("console", self);
          } else if (!strcmp(verb, "find32") && sscanf(cmd, "%*s %x", &a) == 1) {
              /* find32 <hex>: every aligned big-endian u32 equal to <hex> in committed
@@ -45675,7 +46137,7 @@ diff --git a/runtime/ppu/tests/boot_main.cpp b/runtime/ppu/tests/boot_main.cpp
          } else if (!strcmp(verb, "prof") && sscanf(cmd, "%*s %u %u", &a, &b) >= 1) {
              dbg_prof((DWORD)a, b ? b : 5);
          } else if (!strcmp(verb, "hle")) {
-@@ -1006,6 +1236,108 @@
+@@ -1006,6 +1246,108 @@
      return 0;
  }
  
@@ -45784,7 +46246,7 @@ diff --git a/runtime/ppu/tests/boot_main.cpp b/runtime/ppu/tests/boot_main.cpp
  static DWORD WINAPI hang_watchdog(LPVOID)
  {
      HMODULE self = NULL;
-@@ -1023,6 +1355,38 @@
+@@ -1023,6 +1365,38 @@
      snprintf(lbl, sizeof lbl, "%ds sample", t1); dump_threads(lbl, self);
      Sleep((DWORD)(t2 - t1) * 1000);
      snprintf(lbl, sizeof lbl, "%ds sample", t2); dump_threads(lbl, self);
@@ -45823,7 +46285,7 @@ diff --git a/runtime/ppu/tests/boot_main.cpp b/runtime/ppu/tests/boot_main.cpp
      return 0;
  }
  #endif
-@@ -1085,6 +1449,12 @@
+@@ -1085,6 +1459,12 @@
  
  int main(int argc, char** argv)
  {
@@ -45836,7 +46298,7 @@ diff --git a/runtime/ppu/tests/boot_main.cpp b/runtime/ppu/tests/boot_main.cpp
      /* <PPU ELF> [--username NAME] [--psnr host[:port]], flags in any order. */
      const char* elf = NULL;
      const char* username = NULL;
-@@ -1105,10 +1475,46 @@
+@@ -1105,10 +1485,46 @@
      np_psnr_setup(username, psnr);
  
  #ifdef _WIN32
@@ -45883,7 +46345,7 @@ diff --git a/runtime/ppu/tests/boot_main.cpp b/runtime/ppu/tests/boot_main.cpp
      SetUnhandledExceptionFilter(ydkj_crash_filter);
      AddVectoredExceptionHandler(0 /*last*/, [](EXCEPTION_POINTERS* ep)->LONG{
          if (ep->ExceptionRecord->ExceptionCode == 0xC00000FDu /*STACK_OVERFLOW*/) {
-@@ -1121,6 +1527,15 @@
+@@ -1121,6 +1537,15 @@
      { ULONG g=256*1024; SetThreadStackGuarantee(&g); }  /* reserve stack so the SO handler can run */
      signal(SIGABRT, ydkj_abort_handler);
      setvbuf(stdout, NULL, _IONBF, 0);   /* unbuffered: don't lose prints on kill */
@@ -45899,7 +46361,7 @@ diff --git a/runtime/ppu/tests/boot_main.cpp b/runtime/ppu/tests/boot_main.cpp
  #endif
  
      /* Flat VM: one host buffer, guest addr -> vm_base + addr. This maps the
-@@ -1136,8 +1551,24 @@
+@@ -1136,8 +1561,24 @@
      /* Reserve the full 4 GB guest space; pages commit on first touch via the VEH. */
      AddVectoredExceptionHandler(1, guard_report_veh);  /* diagnose 0x80000001 silent deaths */
      AddVectoredExceptionHandler(1, vm_commit_veh);
@@ -45925,7 +46387,7 @@ diff --git a/runtime/ppu/tests/boot_main.cpp b/runtime/ppu/tests/boot_main.cpp
  #else
      vm_base = (uint8_t*)calloc(1, 0xE0000000u);
      ppu_vm_size = 0xE0000000u;
-@@ -1146,6 +1577,25 @@
+@@ -1146,6 +1587,25 @@
  
      uint32_t entry = ppu_load_elf(elf);
      if (!entry) { printf("load failed\n"); return 1; }
