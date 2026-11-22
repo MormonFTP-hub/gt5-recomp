@@ -7,6 +7,25 @@ release on the tested rig in [STATUS.md](STATUS.md) unless a day says otherwise.
 > or repeated frames (fixed on 4 Nov and 9 Nov), so treat them as rough before-and-after comparisons.
 > From 9 Nov on, numbers are the game's own frames.
 
+## 22 Nov 2026
+
+🏷️ Released as **v0.1.110**
+
+📦 **Installing game updates (.pkg) no longer stops at "RPCS3 wasn't found"**
+- The launcher's **Help** > **Install a game update or DLC (.pkg)** installs the packages with RPCS3. Installs
+  since v0.1.105 no longer bring RPCS3 along, so a player without it, or with RPCS3 in a folder the search
+  didn't look in, got "RPCS3 wasn't found" and a command-line option to fix it (reported on Discord).
+- It now also looks in the packages' own folder and the folders above it (a `PS3` folder that holds both
+  RPCS3 and the downloaded updates). With none on the PC, it gets RPCS3 itself into `tools\rpcs3`, once:
+  the newest Windows build from RPCS3's GitHub releases, checked against the SHA-256 published with it,
+  without its welcome box or update check. Then it goes on as before.
+- Checked with RPCS3 two folders above the package (found), and with none on the PC (downloaded, checksum
+  matched, unpacked, and reused by the next run). The package install itself is unchanged.
+
+📝 **README: where saves are, and how to bring one over from RPCS3** (FAQ, `#saves`)
+- The save folder named after your disc, the whole-folder copy from RPCS3's `savedata`, and why files put
+  straight into `savedata` aren't seen (#47).
+
 ## 20 Nov 2026
 
 🏷️ Released as **v0.1.109**

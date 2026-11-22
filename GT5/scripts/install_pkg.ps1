@@ -15,7 +15,11 @@
 # GT5\hdd0\home\00000001\exdata (README, DLC). Nothing here makes or holds keys.
 #
 # RPCS3 is looked for as update_exe.ps1 does: -Rpcs3, GT5_RPCS3, the installer's tools\rpcs3, PATH, and a
-# few usual folders. RPCS3 doesn't run from a temporary folder (it warns and waits).
+# few usual folders, then in the packages' own folder and the folders above it (a PS3 folder that holds
+# both RPCS3 and the downloaded updates). With none found it fetches RPCS3 into tools\rpcs3, as the
+# installer does (installs since v0.1.105 no longer bring it). RPCS3 doesn't run from a temporary folder
+# (it warns and waits). For testing: GT5_PKG_FIND_ONLY=1 stops once RPCS3 is found or fetched;
+# GT5_PKG_NO_SEARCH=1 skips the search of the PC (only -Rpcs3, GT5_RPCS3 and tools\rpcs3 count).
 param([Parameter(Position = 0, ValueFromRemainingArguments = $true)][string[]]$Paths,
       [string]$Gt5 = "", [string]$Rpcs3 = "", [int]$TimeoutMinutes = 30)
 $ErrorActionPreference = "Continue"
@@ -63,21 +67,91 @@ $cands = @()
 if ($Rpcs3) { $cands += $(if ($Rpcs3 -like "*.exe") { $Rpcs3 } else { Join-Path $Rpcs3 "rpcs3.exe" }) }
 if ($env:GT5_RPCS3) { $cands += $(if ($env:GT5_RPCS3 -like "*.exe") { $env:GT5_RPCS3 } else { Join-Path $env:GT5_RPCS3 "rpcs3.exe" }) }
 $cands += Join-Path $base "tools\rpcs3\rpcs3.exe"
-$onPath = Get-Command rpcs3.exe -ErrorAction SilentlyContinue
-if ($onPath) { $cands += $onPath.Source }
-$roots = @("$env:USERPROFILE\Downloads", "$env:USERPROFILE\Desktop", "$env:USERPROFILE\Documents", "$env:LOCALAPPDATA",
-           "$env:ProgramFiles", "${env:ProgramFiles(x86)}")
-$roots += @(Get-PSDrive -PSProvider FileSystem -ErrorAction SilentlyContinue | ForEach-Object {
-    $_.Root; Join-Path $_.Root "Games"; Join-Path $_.Root "Emulators"; Join-Path $_.Root "Downloads" })
-foreach ($r in $roots) {
-    if (-not $r -or -not (Test-Path -LiteralPath $r)) { continue }
-    foreach ($d in @(Get-ChildItem -LiteralPath $r -Directory -Filter "*rpcs3*" -ErrorAction SilentlyContinue)) {
-        $cands += Join-Path $d.FullName "rpcs3.exe"
-        foreach ($s in @(Get-ChildItem -LiteralPath $d.FullName -Directory -ErrorAction SilentlyContinue)) { $cands += Join-Path $s.FullName "rpcs3.exe" }
+if ($env:GT5_PKG_NO_SEARCH -ne "1") {
+    $onPath = Get-Command rpcs3.exe -ErrorAction SilentlyContinue
+    if ($onPath) { $cands += $onPath.Source }
+    $roots = @("$env:USERPROFILE\Downloads", "$env:USERPROFILE\Desktop", "$env:USERPROFILE\Documents", "$env:LOCALAPPDATA",
+               "$env:ProgramFiles", "${env:ProgramFiles(x86)}")
+    $roots += @(Get-PSDrive -PSProvider FileSystem -ErrorAction SilentlyContinue | ForEach-Object {
+        $_.Root; Join-Path $_.Root "Games"; Join-Path $_.Root "Emulators"; Join-Path $_.Root "Downloads" })
+    # The packages' folder and up to four above it: RPCS3 itself there (F:\PS3\rpcs3.exe beside
+    # F:\PS3\updates\...), or a folder with "rpcs3" in its name.
+    foreach ($k in $pkgs) {
+        $d = Split-Path $k.File -Parent
+        for ($up = 0; $d -and $up -lt 5; $up++) {
+            $cands += Join-Path $d "rpcs3.exe"
+            $roots += $d
+            $d = Split-Path $d -Parent
+        }
+    }
+    foreach ($r in ($roots | Select-Object -Unique)) {
+        if (-not $r -or -not (Test-Path -LiteralPath $r)) { continue }
+        foreach ($d in @(Get-ChildItem -LiteralPath $r -Directory -Filter "*rpcs3*" -ErrorAction SilentlyContinue)) {
+            $cands += Join-Path $d.FullName "rpcs3.exe"
+            foreach ($s in @(Get-ChildItem -LiteralPath $d.FullName -Directory -ErrorAction SilentlyContinue)) { $cands += Join-Path $s.FullName "rpcs3.exe" }
+        }
     }
 }
 $exe = @($cands | Where-Object { $_ -and (Test-Path -LiteralPath $_) } | Select-Object -Unique) | Select-Object -First 1
-if (-not $exe) { Fail "RPCS3 wasn't found. Install it (rpcs3.net), or run this again with -Rpcs3 <path to rpcs3.exe> (or set GT5_RPCS3)." }
+
+# None on this PC: RPCS3's newest Windows build from its GitHub releases into tools\rpcs3, checked against
+# the SHA-256 published with it, unpacked into rpcs3.part and renamed when complete (as GT5-Installer.bat's
+# Get-Rpcs3). Windows 11's tar reads the .7z; Windows 10's can't, so 7-Zip, or 7-Zip's own small extractor.
+function Get-OwnRpcs3 {
+    $dir = Join-Path $base "tools\rpcs3"
+    $part = "$dir.part"
+    Say "RPCS3 wasn't found on this PC: getting it into tools\rpcs3 (about 40 MB, once)..." White
+    try {
+        [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+        $rel = Invoke-RestMethod "https://api.github.com/repos/RPCS3/rpcs3-binaries-win/releases/latest" -Headers @{ "User-Agent" = "gt5-pc-install-pkg" } -TimeoutSec 60
+    } catch { Say "  couldn't reach GitHub ($($_.Exception.Message))" Yellow; return $null }
+    $asset = $rel.assets | Where-Object { $_.name -like "*win64*.7z" } | Select-Object -First 1
+    if (-not $asset) { Say "  RPCS3's Windows download wasn't in its newest release" Yellow; return $null }
+    $sum = $rel.assets | Where-Object { $_.name -eq "$($asset.name).sha256" } | Select-Object -First 1
+    Remove-Item -LiteralPath $part -Recurse -Force -ErrorAction SilentlyContinue
+    New-Item -ItemType Directory -Force $part | Out-Null
+    $arc = Join-Path $part $asset.name
+    $old = $ProgressPreference; $ProgressPreference = "SilentlyContinue"
+    try { Invoke-WebRequest $asset.browser_download_url -OutFile $arc -UseBasicParsing -Headers @{ "User-Agent" = "gt5-pc-install-pkg" } -TimeoutSec 600 }
+    catch { Say "  the download failed ($($_.Exception.Message))" Yellow; Remove-Item -LiteralPath $part -Recurse -Force -ErrorAction SilentlyContinue; return $null }
+    finally { $ProgressPreference = $old }
+    if ($sum) {
+        $want = ""
+        # As text: Windows PowerShell's Invoke-WebRequest gives this file (application/octet-stream) as bytes.
+        try { $wc = New-Object Net.WebClient; $wc.Headers.Add("User-Agent", "gt5-pc-install-pkg")
+              $want = ($wc.DownloadString($sum.browser_download_url).Trim() -split '\s+')[0] } catch {}
+        if ($want -and (Get-FileHash -LiteralPath $arc -Algorithm SHA256).Hash -ne $want.ToUpper()) {
+            Say "  the download was damaged (checksum); nothing kept" Yellow
+            Remove-Item -LiteralPath $part -Recurse -Force -ErrorAction SilentlyContinue; return $null
+        }
+    }
+    & tar.exe -xf $arc -C $part 2>$null
+    if (-not (Test-Path -LiteralPath (Join-Path $part "rpcs3.exe"))) {
+        $sz = @("$env:ProgramFiles\7-Zip\7z.exe", "${env:ProgramFiles(x86)}\7-Zip\7z.exe") | Where-Object { Test-Path $_ } | Select-Object -First 1
+        if (-not $sz) {
+            $sz = Join-Path $base "tools\7zr.exe"
+            if (-not (Test-Path -LiteralPath $sz)) {
+                try { Invoke-WebRequest "https://www.7-zip.org/a/7zr.exe" -OutFile $sz -UseBasicParsing -TimeoutSec 120 } catch {}
+            }
+        }
+        if (Test-Path -LiteralPath $sz) { & $sz x -y "-o$part" $arc | Out-Null }
+    }
+    Remove-Item -LiteralPath $arc -ErrorAction SilentlyContinue
+    if (-not (Test-Path -LiteralPath (Join-Path $part "rpcs3.exe"))) {
+        Say "  unpacking it failed (7-Zip from https://www.7-zip.org can do it)" Yellow
+        Remove-Item -LiteralPath $part -Recurse -Force -ErrorAction SilentlyContinue; return $null
+    }
+    # No welcome box, no update check, no pop-ups: it's only used from here.
+    New-Item -ItemType Directory -Force (Join-Path $part "GuiConfigs") | Out-Null
+    [IO.File]::WriteAllText((Join-Path $part "GuiConfigs\CurrentSettings.ini"),
+        "[main_window]`r`ninfoBoxEnabledWelcome=false`r`ninfoBoxEnabledInstallPUP=false`r`ninfoBoxEnabledInstallPKG=false`r`n[Meta]`r`ncheckUpdateStart=false`r`n")
+    Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue
+    Move-Item -LiteralPath $part -Destination $dir
+    return (Join-Path $dir "rpcs3.exe")
+}
+if (-not $exe) { $exe = Get-OwnRpcs3 }
+if (-not $exe) { Fail "RPCS3 wasn't found and couldn't be downloaded (see above). Install it from rpcs3.net, or run this again with -Rpcs3 <path to rpcs3.exe>." }
+if ($env:GT5_PKG_FIND_ONLY -eq "1") { Say "RPCS3: $exe" White; exit 0 }
 if ($exe -match '\\(Temp|tmp)\\') { Say "  note: RPCS3 is in a temporary folder ($exe); it may refuse to start from there." Yellow }
 $emu = Split-Path $exe -Parent
 $hdd = Join-Path $emu "dev_hdd0"

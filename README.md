@@ -655,6 +655,26 @@ drawn, its shaders are built for your graphics card, and the picture used to pau
   moment in the first race. **Off** waits for each new shader, as before. Vulkan always builds new
   shaders in the background, so it has no such row.
 
+<a id="saves"></a>
+
+**Q: Where are my saves? Can I bring a save over from RPCS3?**
+
+**A: In a folder named after your disc, inside `GT5\gamedata`:**
+
+```
+GT5\gamedata\dev_hdd0\home\00000001\savedata\BCUS98114-GAME     (US disc)
+GT5\gamedata\dev_hdd0\home\00000001\savedata\BCES00569-GAME     (European disc)
+```
+
+That's the same place a PS3 and RPCS3 keep it, so a save comes over by copying that **whole folder**:
+1. Close the game, and keep a copy of the port's own `<title ID>-GAME` folder if you have one.
+2. In RPCS3's own folder, open `dev_hdd0\home\00000001\savedata` and copy the `<title ID>-GAME` folder
+   (and `<title ID>-BKUP`, its backup, if there is one) into the port's `savedata` folder above.
+
+Copy the folder itself, not the files inside it: files put straight into `savedata` aren't seen. The title
+ID has to match your disc (a European save doesn't show up in the US game, and the other way round).
+Updates never touch `GT5\gamedata`.
+
 **Q: Is this legal? Do I need the game?**
 
 **A: You need your own copy of GT5, and nothing from the game is in this repository.** It holds only
