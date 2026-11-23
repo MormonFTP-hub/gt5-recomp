@@ -1,0 +1,213 @@
+# SPU code addresses the game reaches only through a computed branch, lifted as entries of their image
+# (scripts/lift_spu_jobs.py passes them to spu_lifter.py --entries). Without an entry the runtime finds no
+# lifted code at such an address and interprets the bytes there instead.
+#   <image> <address> <how it is reached>
+# Lines come from two places: a static search of the lifted images (n_static tools/find_link_entries.py)
+# and the run-time recorder (SPU_TARGET_LOG=<file> writes this same format: every address the runtime had
+# to look up without finding a lifted function, or handed to the interpreter). Edit by hand; a change here
+# re-lifts (lift_stamp.py fingerprints this file).
+#
+# The Wws jobs' entry stub (26 of the 28 jobs, at code offset 0x94): it builds its own return point,
+# `ila $r0,0xDC ; a $r0,$r0,$r126` ($r126 = the code base), and BRANCHES (not calls) to the job's main, whose
+# `bi $r0` lands here with no caller frame waiting. Until 21 Nov 2026 it was interpreted after every job
+# ("[spu-smc] microstep img=7 pc=0x040DC ... handing to the interpreter").
+w015E8A00 000040DC link (job entry stub return point, built at 0x40C8)
+w015FD500 000040DC link (job entry stub return point, built at 0x40C8)
+w01603480 000040DC link (job entry stub return point, built at 0x40C8)
+w01606C00 000040DC link (job entry stub return point, built at 0x40C8)
+w0160E980 000040DC link (job entry stub return point, built at 0x40C8)
+w01613500 000040DC link (job entry stub return point, built at 0x40C8)
+w01618280 000040DC link (job entry stub return point, built at 0x40C8)
+w0161BC00 000040DC link (job entry stub return point, built at 0x40C8)
+w0161D200 000040DC link (job entry stub return point, built at 0x40C8)
+w01625600 000040DC link (job entry stub return point, built at 0x40C8)
+w0163C080 000040DC link (job entry stub return point, built at 0x40C8)
+w0163FE00 000040DC link (job entry stub return point, built at 0x40C8)
+w01642000 000040DC link (job entry stub return point, built at 0x40C8)
+w01673300 000040DC link (job entry stub return point, built at 0x40C8)
+w01677200 000040DC link (job entry stub return point, built at 0x40C8)
+w01695680 000040DC link (job entry stub return point, built at 0x40C8)
+w016BD680 000040DC link (job entry stub return point, built at 0x40C8)
+w016C0780 000040DC link (job entry stub return point, built at 0x40C8)
+w016C1200 000040DC link (job entry stub return point, built at 0x40C8)
+w016CD700 000040DC link (job entry stub return point, built at 0x40C8)
+w016D2E00 000040DC link (job entry stub return point, built at 0x40C8)
+w016D4400 000040DC link (job entry stub return point, built at 0x40C8)
+w016D8A80 000040DC link (job entry stub return point, built at 0x40C8)
+w016D9680 000040DC link (job entry stub return point, built at 0x40C8)
+w016DCF80 000040DC link (job entry stub return point, built at 0x40C8)
+w016E1C80 000040DC link (job entry stub return point, built at 0x40C8)
+#
+# From the first race of the static build (22 Nov 2026, chase and cockpit view, SPU_TARGET_LOG): computed
+# branches to code of the image itself with no lifted function there, run by the interpreter (`interpreted`) or
+# by its micro-step (`stepped`; the recorder called those "generated": they are the image's own bytes). What
+# they are: w01695680 0x6420-0x64C8 a table of `br X; lnop` stubs; prologues of functions called through
+# pointers (w01695680 0x7040, 0x70E8, 0x71C0, 0x8798, 0x8B40, 0x8C00, 0xA488, ...; w0161D200 0x8DC0 ...);
+# loop and continuation points; the job manager's job-return continuation 0x3280 (a job's `bi $r0` lands
+# there) with its two helper-call return points 0x3288 / 0x3290, and its loop at 0x2CD8.
+j75BFE68A 00002CD8 stepped (race 22 Nov: 4724165)
+j75BFE68A 00003280 stepped (race 22 Nov: 5146962)
+j75BFE68A 00003288 stepped (race 22 Nov: 5146962)
+j75BFE68A 00003290 stepped (race 22 Nov: 5146962)
+w0160E980 00006D08 stepped (race 22 Nov: 2424)
+w0161D200 00008DC0 interpreted (race 22 Nov: 8447)
+w0161D200 00008DF0 interpreted (race 22 Nov: 8447)
+w0161D200 00008E20 interpreted (race 22 Nov: 8447)
+w0161D200 00008E50 interpreted (race 22 Nov: 8447)
+w0161D200 00008E80 interpreted (race 22 Nov: 8447)
+w0161D200 0000A728 interpreted (race 22 Nov: 80)
+w01695680 00006420 stepped (race 22 Nov: 134536)
+w01695680 00006428 stepped (race 22 Nov: 14861720)
+w01695680 00006430 interpreted (race 22 Nov: 111118)
+w01695680 0000647C interpreted (race 22 Nov: 130601)
+w01695680 000064C0 stepped (race 22 Nov: 371925)
+w01695680 000064C8 stepped (race 22 Nov: 12506233)
+w01695680 00007040 stepped (race 22 Nov: 413539)
+w01695680 000070E8 stepped (race 22 Nov: 213)
+w01695680 00007178 interpreted (race 22 Nov: 220688)
+w01695680 00007190 interpreted (race 22 Nov: 138746)
+w01695680 000071A8 interpreted (race 22 Nov: 8418)
+w01695680 000071C0 stepped (race 22 Nov: 161054)
+w01695680 00008798 stepped (race 22 Nov: 20832)
+w01695680 00008B40 stepped (race 22 Nov: 13795)
+w01695680 00008C00 stepped (race 22 Nov: 142)
+w01695680 00008C18 interpreted (race 22 Nov: 19483)
+w01695680 0000A488 interpreted (race 22 Nov: 10602812)
+w01695680 00013224 interpreted (race 22 Nov: 46491)
+w01695680 0001335C stepped (race 22 Nov: 30374)
+w01695680 00013368 stepped (race 22 Nov: 30374)
+w01695680 0001336C stepped (race 22 Nov: 30374)
+w01695680 00013378 stepped (race 22 Nov: 30374)
+w01695680 0002318C interpreted (race 22 Nov: 306712)
+w01695680 00023290 interpreted (race 22 Nov: 306712)
+w01695680 000233C4 interpreted (race 22 Nov: 462097)
+w016E1C80 000094E8 stepped (race 22 Nov: 736)
+w016E1C80 000094F8 stepped (race 22 Nov: 736)
+w018CAD00 0000CC20 interpreted (race 22 Nov: 3601980)
+#
+# One name for the same job code in every release (lift_spu_jobs.py, known_names): `<image> = <SHA-1 of
+# the image's bytes>`. A Wws job is named after its address in the EBOOT, and the game updates moved every
+# one: these lines keep the name of the first release that has those bytes (01.00, then 2.01, then 2.11),
+# so the entries above and below, src/native/natives.txt and the native code find the job wherever it sits.
+# 2.11 keeps 4 of the disc's 28 jobs byte for byte (w016C0780, w016C1200, w018C3A80, w018CAD00) and 15 of
+# 2.01's; 2.17 has 2.11's 38 jobs byte for byte, each at another address. Made by comparing the releases'
+# EBOOTs (22 Nov 2026); an image not listed is named after its own address, as before. The run-time
+# recorder (SPU_TARGET_LOG) and the [spu-static] line still name a job by its address in the EBOOT that is
+# running: lift_spu_jobs.py prints which name each such job has here ("known by another release's name").
+w015E8A00 = e18026345189d6e93c2d23475a078cf48303dce4   # 01.00
+w015FD500 = 9cd9d7c215d1b886a35ef409f575537a06c44be1   # 01.00
+w01603480 = 83718a5206161589917c86efa13bea07eaec8576   # 01.00
+w01606C00 = b0c4ba1bc90ab4d4313f2a3dc6e2b5910ab17f9a   # 01.00
+w0160E980 = e801f4220509eb031f771c3cc5f7e165cf258575   # 01.00
+w01613500 = 9fb5f74bf63384500c6af7fb0d6215c0eaa15a5d   # 01.00
+w01618280 = 49e019f4fc788bcc5699af2d77f917accff25a58   # 01.00
+w0161BC00 = 3426b6010f2dcd3ceb7860b4d84716892a61c714   # 01.00
+w0161D200 = 56f81181a06ceb105ed58ce6d0334fa42eb8b50f   # 01.00
+w01625600 = 1719cdeeed5daa50604d3712f48508d119927518   # 01.00
+w0163C080 = 8a79a821bf37252a9ce2633154a6724919f6a322   # 01.00
+w0163FE00 = fac8d6b51b7a377e80e837a52fa2c0486f2527bb   # 01.00
+w01642000 = 3f679c812eed53110d006cd47b782c40c2fdd3b1   # 01.00
+w01673300 = 83a9de024bee0b2d177594f27c844227491e5a45   # 01.00
+w01677200 = b1ba27fb70ba20cad2e6879e517921559e600cea   # 01.00
+w01695680 = 690d958c848dde4fbcffaaf7bfc88237241cc5b0   # 01.00
+w016BD680 = 2356f052b7d906bd38525ecde4f0159df4eb8a7a   # 01.00
+w016C0780 = 73c00308c4e8c69110b73e5f541e062696e8e92a   # 01.00
+w016C1200 = c6337a9fb8f61ab4b7614ff761a96692e9c8e561   # 01.00
+w016CD700 = d6c1a7ca9a3cc24eb1b7b7fd7c136fd898b6aec7   # 01.00
+w016D2E00 = 8af394e4e98a440e3b1f53e7022ca3f8cc100266   # 01.00
+w016D4400 = 0fdfe28ee77221ea28443b80d793eb28c24d3763   # 01.00
+w016D8A80 = 2ba6820019968df616306227dc9ad518731ca48b   # 01.00
+w016D9680 = 7d05908e4a9fcd1f301f24819b3e792ba86c71a1   # 01.00
+w016DCF80 = c689b954a70ad48f22ef3fb01b93c7a1d198f02f   # 01.00
+w016E1C80 = 6ff72e1a54ace6b2986db8ae02e840e78124adb1   # 01.00
+w018C3A80 = 2eefc895904e79b17ad735320bea778562fd9360   # 01.00
+w018CAD00 = 7bc7c3368148df7f60d8e8d2fe5eceff87780da2   # 01.00
+w01732C80 = e022647b095078acacb623a3daf183e39794b54a   # 2.01
+w0174C300 = 7d869713b78f861c631f93ed61bc91ef508993f3   # 2.01
+w01752880 = 088f67637c13f9aac7b8d50aae14c97f6346fee5   # 2.01
+w01767D00 = 3924fe181be709f6c2142faef306159b931d774a   # 2.01
+w0176CF80 = 446f09c8616eeb0648b43b61ad79c5f3a18ba2a4   # 2.01
+w01770680 = 5e869f3a112656727e3d716637587284c04348ee   # 2.01
+w01778380 = 968872f84e362d3f2ae8881f631a1df0a887bc15   # 2.01
+w0177CF00 = 8444e7dc3d8362d9ab82c5739c30d43210738f47   # 2.01
+w01781C00 = f8326e2db0847bd897e7c583b525cf8e45fd87e8   # 2.01
+w01785580 = d375a27a71671d0a2e90ded840d932c3af6a0f09   # 2.01
+w01786B00 = 15a9b52001e81e8b8b7e0b0e17bb690004ec5cd2   # 2.01
+w0178EE80 = 8555d7f2e0a6cead4f16f60081e82746279d71cc   # 2.01
+w017A5980 = f7ccc45713bd71b110cef17c6fd9b13f6006443c   # 2.01
+w017A9900 = 865ebf0aaa6be4a516eb596a7944598a7a4bc227   # 2.01
+w017AD080 = a99f8b24fc0ca5b140a650e7369a967d501ee03e   # 2.01
+w017BC380 = a73977d968d9b2387c0fcaa171053bf9e33b1ca5   # 2.01
+w017D9200 = 046c688d3058827225d64b84045bda35858ba635   # 2.01
+w017E3300 = 6bdf011064a49dc5218847ea1f310a32cdf621da   # 2.01
+w017EBF00 = c16558454f7ddd0968c3224a1f11ce946a78a6db   # 2.01
+w017EFE80 = 35d3a3db6550842016dda1182075070c77c44fa3   # 2.01
+w0180E400 = 46a47d03ca4f998d70e17d1ea4f41bd670fa203b   # 2.01
+w01838100 = 2eb7639076a2a6b61c4f4826ac5ca3b3abbaf2dd   # 2.01
+w01839380 = d1b384880bb8ebeff7edd2b0b896e0cd951ae34e   # 2.01
+w01849480 = 67c5e12fd839992a46665f9f4e977aa84edc46f4   # 2.01
+w0184BC80 = e1122f2400f0c4ac140e17e839f784dbb02b4449   # 2.01
+w0184D800 = dc6121524adf374c0e5ae88fce50bffedb538755   # 2.01
+w0184ED80 = 0f37e1723890807bf2831246b96dddcbbed71ad6   # 2.01
+w01853500 = 70519a02fc9f111404ff10148278994e010ce5f3   # 2.01
+w01854100 = 03b936d95f10dcc1e046228451fd1332aa81b528   # 2.01
+w01858B80 = df75f005db4f039b288dadcda1d16c42ad209cd8   # 2.01
+w0185E800 = 66cf360fee492006a7a1b45954be5fb6a6f4a439   # 2.01
+w01865800 = b193c390be1f341e5fa9da90b4d071ebba7eb181   # 2.01
+w018ADB00 = 20425eb1aaa79fa4792540e42a07deae2c0bc05f   # 2.01
+w018B4600 = d3dec6203a8ed2ee9ba734642897b2c785107d73   # 2.01
+w014BD280 = 757dac2c65d3eaed9de5d39bb074f503bf1e0e97   # 2.11
+w014DD280 = 87376e4dec459bc42af57deca5aa96d568d9cf50   # 2.11
+w014F3280 = 80e2e94eac41770964018891b14df6eae9292575   # 2.11
+w01503900 = 82331d49043cb8e942ef7c7f387549eae55b513d   # 2.11
+w0150D180 = 0a4974665bf9c3edd7b88f2fcfd026dcb12dd0ac   # 2.11
+w01512080 = ded11448b8c5fdc123dedf84db7b90a5abae3802   # 2.11
+w0151A400 = aadbd188960387ebc3432c0f23dc7da3e0d4f27e   # 2.11
+w01534E80 = b8cbccd0ef37d0d79075daebfbc0691a4013f638   # 2.11
+w01547B80 = f29676eda7fae0a5fae9fad8df044620ddf38a6a   # 2.11
+w01564A80 = 0e8aa081a07863b201991ca80a153149fd7eb4ac   # 2.11
+w0156EB80 = ce36079b9e8a641c10490bab74d0f53c322915a5   # 2.11
+w01599C80 = 87f317f5758610236533417215172e0eaef33c60   # 2.11
+w015C4C00 = d60a0c9b7cd957e9e635b0fbe1d220063c012da6   # 2.11
+w015DA580 = 652e73d625d4313168d68e15ef066e8f71ed3632   # 2.11
+w015DE780 = b9bee95ebe29e37f793654ffc0f58cd9710c6234   # 2.11
+w015E5080 = 0646a961b9e40f26ac7027022f2200aff124dd0d   # 2.11
+w015E9D80 = e738147e10ed1b69cb64c14b950ca4d6fee42b53   # 2.11
+w015EFA00 = 58f360685d9b0cc4ace8e55bf78abc302f8b716c   # 2.11
+w0163EB00 = ca7085d0979c77f71915486420463373cf839127   # 2.11
+#
+# Game update 2.11 (22 Nov 2026: Europe, Arcade race at Rome, 16 cars, three camera views, SPU_TARGET_LOG).
+# Its jobs are other builds than the disc's, so none of the lines above reached them and about 70,000
+# instructions a second were interpreted there (w0156EB80 most of it). `any-address`: reached through the
+# dispatcher with no lifted function, run by the image's any-address form. 2.17 has the same jobs.
+w01503900 00006CB8 stepped (2.11 Rome 22 Nov: 6146)
+w01512080 00008D80 interpreted (2.11 Rome 22 Nov: 6052)
+w01512080 00008DB0 interpreted (2.11 Rome 22 Nov: 6052)
+w01512080 00008DE0 interpreted (2.11 Rome 22 Nov: 6052)
+w01512080 00008E10 interpreted (2.11 Rome 22 Nov: 6052)
+w01512080 00008E40 interpreted (2.11 Rome 22 Nov: 6052)
+w01512080 0000A2F0 stepped (2.11 Rome 22 Nov: 632)
+w01512080 0000A6E8 interpreted (2.11 Rome 22 Nov: 266)
+w0156EB80 00005824 interpreted (2.11 Rome 22 Nov: 584337)
+w0156EB80 00005850 interpreted (2.11 Rome 22 Nov: 499021)
+w0156EB80 0000587C interpreted (2.11 Rome 22 Nov: 1691828)
+w0156EB80 00005A78 interpreted (2.11 Rome 22 Nov: 97393)
+w0156EB80 00005EA8 interpreted (2.11 Rome 22 Nov: 998042)
+w0156EB80 00006240 interpreted (2.11 Rome 22 Nov: 596393)
+w0156EB80 0000626C interpreted (2.11 Rome 22 Nov: 109449)
+w0156EB80 00006438 interpreted (2.11 Rome 22 Nov: 1227050)
+w01599C80 00007168 stepped (2.11 Rome 22 Nov: 340346)
+w01599C80 00007210 stepped (2.11 Rome 22 Nov: 4680)
+w01599C80 000072A0 interpreted (2.11 Rome 22 Nov: 118865)
+w01599C80 000072B8 interpreted (2.11 Rome 22 Nov: 63922)
+w01599C80 000072E8 stepped (2.11 Rome 22 Nov: 77657)
+w01599C80 00012FE8 interpreted (2.11 Rome 22 Nov: 32522)
+w01599C80 00013120 stepped (2.11 Rome 22 Nov: 27510)
+w01599C80 0001312C stepped (2.11 Rome 22 Nov: 27510)
+w01599C80 00013130 stepped (2.11 Rome 22 Nov: 27510)
+w01599C80 0001313C stepped (2.11 Rome 22 Nov: 27510)
+w01599C80 00023A14 any-address (2.11 Rome 22 Nov: 291396)
+w01599C80 00023B18 any-address (2.11 Rome 22 Nov: 291396)
+w01599C80 00023C4C any-address (2.11 Rome 22 Nov: 845168)
+w015EFA00 00009580 stepped (2.11 Rome 22 Nov: 1620)
+w015EFA00 00009590 stepped (2.11 Rome 22 Nov: 1620)

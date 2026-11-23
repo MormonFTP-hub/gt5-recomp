@@ -21,7 +21,7 @@ import hashlib
 import re
 import sys
 
-EXPECT_SHA1 = "7c707417c7e29d223a60ba863d49d508e2f6867d"
+EXPECT_SHA1 = "a2e29c5b3a6c97cc09fd0d7ea66e1a119a8ec69d"
 FUNC = "SPU_SV void gt5_w01606C00_spu_func_00007DC8_sv(spu_context* ctx) {"
 LABELS = ["loc_00007E58", "loc_00007F10", "loc_00007FC4"]
 INTR = re.compile(r"^\s*if \(ctx->int_enable && \(ctx->event_status & ctx->event_mask\)\) \{.*return; \}\s*$")

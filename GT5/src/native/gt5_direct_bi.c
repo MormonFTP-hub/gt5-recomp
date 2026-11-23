@@ -37,7 +37,11 @@ uint32_t spu_registry_size(void);                                       /* spu_c
 int ps3_ab_on(const char* what);                                        /* sys_ppu_thread.c */
 #define GT5_DBI_VERIFIED 2   /* spu_channels.c: SPU_OVERLAY_PENDING = 1, SPU_OVERLAY_VERIFIED, SPU_OVERLAY_REJECTED */
 
-SPU_THREAD_LOCAL gt5_dbi_memo t_gt5_dbi;
+SPU_THREAD_LOCAL gt5_dbi_memo t_gt5_dbi[2];
+gt5_dbi_image* g_gt5_dbi_by_id[256];
+int g_gt5_dbi_xroute = 1;            /* GT5_DIRECT_BI_XIMAGE: 1 (default), 0 */
+extern SPU_SV void (*g_spu_direct_dispatch)(spu_context*);   /* spu_channels.c: the interrupt path's direct hop */
+extern SPU_SV void (*g_spu_direct_iret)(spu_context*);       /* spu_channels.c: the interrupt return's direct hop */
 int g_gt5_direct_bi = -1;            /* GT5_DIRECT_BI: 0, 1 (default), 2 */
 static char s_off[512];              /* GT5_DIRECT_BI_OFF */
 static gt5_dbi_image* s_images;
@@ -50,12 +54,20 @@ static void dbi_init(void)
     g_gt5_direct_bi = (e && e[0] == '0') ? 0 : (e && e[0] == '2') ? 2 : 1;
     const char* o = getenv("GT5_DIRECT_BI_OFF");
     if (o) { snprintf(s_off + 1, sizeof s_off - 2, "%s", o); s_off[0] = ','; strcat(s_off, ","); }
-    if (g_gt5_direct_bi != 1 || o) {
-        fprintf(stderr, "[direct-bi] GT5_DIRECT_BI=%d%s%s%s\n", g_gt5_direct_bi,
+    const char* x = getenv("GT5_DIRECT_BI_XIMAGE");
+    g_gt5_dbi_xroute = !(x && x[0] == '0');
+    /* SPU_JOB_CAPTURE recognises a WWS job's start in the dispatcher (spu_jcap.c): the manager's call of a job
+     * must reach it, so no cross-image routes in a capture run */
+    { const char* c = getenv("SPU_JOB_CAPTURE"); if (c && *c) g_gt5_dbi_xroute = 0; }
+    if (g_gt5_direct_bi != 1 || o || !g_gt5_dbi_xroute) {
+        fprintf(stderr, "[direct-bi] GT5_DIRECT_BI=%d%s%s%s%s\n", g_gt5_direct_bi,
                 g_gt5_direct_bi == 2 ? " (every direct branch checked)" : g_gt5_direct_bi == 0 ? " (the dispatcher)" : "",
-                o ? ", off for " : "", o ? o : "");
+                o ? ", off for " : "", o ? o : "", g_gt5_dbi_xroute ? "" : ", each image's own entries only (GT5_DIRECT_BI_XIMAGE=0)");
         fflush(stderr);
     }
+    /* the runtime's interrupt path: the job manager's handler body through its switch (spu_channels.c) */
+    if (g_gt5_direct_bi) g_spu_direct_dispatch = gt5_dbi_ctx_branch;
+    if (g_gt5_direct_bi) g_spu_direct_iret = gt5_dbi_iret_branch;   /* n_static, 22 Nov 2026 */
 }
 static int dbi_listed_off(const char* name)
 {
@@ -72,7 +84,42 @@ void gt5_dbi_register(gt5_dbi_image* im)
     im->cfg = dbi_listed_off(im->name) ? 0 : g_gt5_direct_bi;
     im->mode = im->cfg;
     im->next = s_images; s_images = im;
+    if ((unsigned)im->image_id < 256u) g_gt5_dbi_by_id[im->image_id] = im;
     __atomic_store_n(&s_lock, 0, __ATOMIC_RELEASE);
+}
+
+/* g_spu_direct_dispatch (the runtime's interrupt path): ctx->pc in the context's own image -- its switch when
+ * it has direct branches and they are on, else the dispatcher (the switch sets the trampoline itself when it
+ * does not take the branch). */
+SPU_SV void gt5_dbi_ctx_branch(spu_context* ctx)
+{
+    const gt5_dbi_image* im = (unsigned)ctx->image_id < 256u ? g_gt5_dbi_by_id[ctx->image_id] : NULL;
+    if (im && im->kind == 0 && im->branch_sv) {
+        if (im->mode == 1) { __attribute__((musttail)) return im->branch_sv(ctx); }
+        if (im->mode == 2) { __attribute__((musttail)) return im->branch_chk_sv(ctx); }
+    }
+    g_spu_trampoline_fn = spu_indirect_branch;
+}
+
+/* g_spu_direct_iret (the runtime's interrupt return, n_static 22 Nov 2026): the registers are back and ctx->pc is
+ * srr0, the interrupted point -- an entry of the image the dispatcher resolves it in (the resident slot over it, else
+ * the context's image), since the drain takes interrupts only at a hop to a lifted function. That image's own switch,
+ * with its own ready check and confirmation; anything it does not take goes back to the dispatcher. */
+SPU_SV void gt5_dbi_iret_branch(spu_context* ctx)
+{
+    const uint32_t pc = ctx->pc & SPU_LS_MASK;
+    int img = ctx->image_id;
+    for (unsigned s = 0; s < 4; s++)
+        if (ctx->resident_code[s].image_id && pc - ctx->resident_code[s].lsa < ctx->resident_code[s].size) {
+            img = ctx->resident_code[s].image_id;
+            break;
+        }
+    const gt5_dbi_image* im = (unsigned)img < 256u ? g_gt5_dbi_by_id[img] : NULL;
+    if (im && im->branch_sv) {
+        if (im->mode == 1) { __attribute__((musttail)) return im->branch_sv(ctx); }
+        if (im->mode == 2) { __attribute__((musttail)) return im->branch_chk_sv(ctx); }
+    }
+    g_spu_trampoline_fn = spu_indirect_branch;
 }
 
 /* Every entry of the image's table is the registry's function for (entry, image)? Once, and again when
@@ -123,7 +170,7 @@ int gt5_dbi_confirm(spu_context* ctx, const gt5_dbi_image* im0)
         else if (a > pc) { if (a < hi) hi = a; }
     }
     if (pc - lo >= hi - lo) return 0;
-    gt5_dbi_memo* m = &t_gt5_dbi;
+    gt5_dbi_memo* m = &t_gt5_dbi[im->kind & 1];
     m->ctx = ctx; m->img = im; m->id = ctx->dcache_id; m->res = ctx->dcache_residency;
     m->iid = ctx->image_id; m->ovl = ctx->resident_ovl; m->lo = lo; m->hi = hi;
     return 1;

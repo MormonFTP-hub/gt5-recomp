@@ -147,7 +147,22 @@ if (-not $Here -and -not $AfterSwitch) {
         if ($target) { $label = $target } else { $target = "origin/main"; $label = "the newest development build" }
     }
     $targetCommit = git -C $base rev-parse "$target^{commit}"
-    if ($targetCommit -eq (git -C $base rev-parse HEAD) -and -not $Force -and (Test-Path (Join-Path $state "applied.patch"))) {
+    # Already on that version, but a game update was installed since the last build (the launcher's Help page, or
+    # by hand): its executable is brought into GT5\input, and when the generated code no longer matches the
+    # executable this run goes on to convert and build it instead of stopping at "Already on". Before, an
+    # update here said "Already on ..." and the player had to know to run setup.bat.
+    $staleLift = $false
+    if ($targetCommit -eq (git -C $base rev-parse HEAD) -and -not $Force -and -not $NoBuild -and (Test-Path (Join-Path $state "applied.patch")) -and
+        (Test-Path (Join-Path $gt5 "input\EBOOT.elf")) -and (Test-Path $py) -and (Test-Path (Join-Path $gt5 "scripts\lift_stamp.py"))) {
+        if (Test-Path (Join-Path $gt5 "scripts\update_exe.ps1")) {
+            & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $gt5 "scripts\update_exe.ps1") -Gt5 $gt5 *> $null
+        }
+        Push-Location $gt5
+        & $py "scripts\lift_stamp.py" --check *> $null
+        $staleLift = ($LASTEXITCODE -ne 0)
+        Pop-Location
+    }
+    if ($targetCommit -eq (git -C $base rev-parse HEAD) -and -not $Force -and -not $staleLift -and (Test-Path (Join-Path $state "applied.patch"))) {
         # Parts next to the game that an earlier updater did not know how to add (it brought this version in
         # with its own, older steps): added now, so nothing waits for the next version. Never a stop.
         $addCommonNow = Join-Path $gt5 "scripts\addon_common.ps1"
@@ -169,7 +184,8 @@ if (-not $Here -and -not $AfterSwitch) {
         Write-Host "Already on $label."
         Finish 0
     }
-    if ($targetCommit -eq (git -C $base rev-parse HEAD)) { Write-Host "Reinstalling $label" }
+    if ($staleLift) { Write-Host "The game's executable changed (a game update was installed): converting and building the game for it." }
+    elseif ($targetCommit -eq (git -C $base rev-parse HEAD)) { Write-Host "Reinstalling $label" }
     else { Write-Host "Switching from $from to $label" }
 
     # Edits the player made to tracked files (play.bat, say) are set aside and put back after.

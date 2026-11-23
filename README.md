@@ -443,6 +443,7 @@ If something is off, add a line to `GT5\settings.bat` (right-click it > Edit; up
 | The forces push the wrong way (the wheel pulls away from the centre) | `set "PS3_WHEEL_FFB_INVERT=1"` |
 | Forces too strong or too weak | `set "PS3_WHEEL_FFB=60"` (percent, 0 = off) |
 | Steering too quick or too slow | set your wheel's rotation to 900° in its software (G HUB, ...), or tell the port what it is: `set "PS3_WHEEL_RANGE=1080"` |
+| Pedals, or the wheel's buttons, plug in with their own USB cable (a direct-drive base with separate pedals, a rim or button box of its own) | in the game, **F1** > **Controls** > **Wheel buttons and pedals**: **Pedals from** and **Buttons from** pick that device (Enter or Cross steps through the controllers found), then the rows below set its pedals and buttons by pressing them. Or in `settings.bat`: `set "PS3_WHEEL_PEDAL_DEVICE=<part of its name>"` and `set "PS3_WHEEL_BUTTON_DEVICE=<part of its name>"`, as the `[wheel] found` lines of `play.err` list them (its `VID:PID` works too). The base keeps the steering and the force feedback. Since v0.1.111 |
 | A pedal does nothing, or the wrong thing | `set "PS3_WHEEL_TRACE=1"`, press each pedal, and see which axis moves in the `[wheel] axes` lines of `play.err`; then e.g. `set "PS3_WHEEL_PEDALS=throttle=Y,brake=RZ,clutch=Z"` (add `inv` to one that works backwards: `brake=RZinv`) |
 | Throttle and brake swapped on a wheel whose pedals share one axis | `set "PS3_WHEEL_PEDALS=throttle=Yinv"` (`play.err` names the shared axis: `[wheel] throttle and brake share the Y axis`) |
 | A button is wrong | `set "PS3_WHEEL_BUTTONS=cross=1,circle=3,start=10"`, with button numbers as Windows' *Set up USB game controllers* window (`joy.cpl`) shows them; names: cross square circle triangle r1 l1 r2 l2 select start r3 l3 gear1..gear6 gearr plus minus dialcw dialccw, and up down left right for the d-pad |
@@ -553,11 +554,11 @@ questions, the opening movie, Arcade and a 16-car race). The Asian release's 2.0
 loads a career save and races. An update needs two things from your PS3 (or RPCS3): its executable
 and its data, see [Game updates](#game-updates).
 
-**The GT5 Master Mod runs too** (Nenkai's, 1.9.2 on update 2.11, US release; a player's report on
-13 Nov): its boot screen, the menus, its SELECT debug menu and an A-Spec race. Set it up like an
-update: install 2.11 and the mod in RPCS3, copy the data, and use the mod's `EBOOT.BIN` as the
-executable (`setup.ps1` unlocks it from RPCS3's `dev_hdd0` by itself since v0.1.35). The data alone,
-with the disc's executable, gives a black screen before the main menu.
+**The GT5 Master Mod runs too** (Nenkai's and ddm's; 2.0.0a on Europe 2.11 on the test PC, and players
+run it on the US release): its menus and news, its SELECT debug menu, Arcade's Master level and races.
+Bring the game to update 2.11, then the launcher installs the mod's zip by itself: see
+[Game mods](#game-mods). The update's data with the disc's executable gives a black screen before the
+main menu, so the launcher builds the game for the update right after installing it.
 
 The Asian 2.17 hasn't been tried yet: each update can change the game's SPU programs again, so please
 report what setup prints (`version_addrs.py`'s lines and `SPU jobs found in EBOOT.elf: N of 15`; 2.17
@@ -616,7 +617,8 @@ since v0.1.21 that movie is skipped.) Attach that run's log to
 `GT5\logs\play.err` until you start the game again, then `GT5\logs\play.prev.err` (each start keeps the
 previous log under that name; builds before v0.1.10 didn't, so there copy `play.err` before restarting). A
 line in it starting with `[d3d-fail]` says what failed, and that decides the fix. If no new picture came
-for 8 seconds, a `[HANG]` report in the same log says what each busy thread was doing at that moment.
+for 8 seconds, a `[HANG]` report in the same log says what each busy thread was doing at that moment. If
+it kept drawing but crawled (under 6 frames a second for 6 seconds), a `[SLOW]` report says the same.
 
 **Q: How do I attach my log to an issue? GitHub won't take it.**
 
@@ -992,7 +994,8 @@ update or DLC (.pkg)*, and pick the update packages. Pick all of them from the f
 ... up to the version you want): RPCS3 installs updates only in order, and the ones it already has are
 skipped. This runs `GT5\scripts\install_pkg.ps1`. It installs the packages with RPCS3 (its window opens
 for each one; leave it be), copies the game's folder into `GT5\hdd0` and unlocks the new executable:
-steps 1 to 3 below. Then run `setup.bat` once (step 4). It needs RPCS3: the installer's own copy in
+steps 1 to 3 below. The launcher then builds the game for the update by itself (step 4, about 20 minutes;
+done by script instead, run `Update.bat` or `setup.bat` afterwards). It needs RPCS3: the installer's own copy in
 `tools\rpcs3` is found by itself, or set `GT5_RPCS3` to your `rpcs3.exe`. Without the launcher:
 `powershell -ExecutionPolicy Bypass -File GT5\scripts\install_pkg.ps1 <folder with the .pkg files>`.
 
@@ -1017,6 +1020,38 @@ By hand:
 If your disc folder's `PS3_GAME\PARAM.SFO` already says version 02.xx, it holds the update's
 executable, but usually not its data: step 3 is still needed. `GT5-Installer.bat` doesn't do these
 steps yet.
+
+<a id="game-mods"></a>
+
+### Game mods (the GT5 Master Mod)
+
+A mod that comes as a zip of `PDIPFS` files, like the [GT5 Master Mod](https://gt5mm.gt-mod.site/),
+installs straight into the port. No RPCS3 step is needed for the mod itself.
+
+1. **Bring the game to the update the mod needs.** The Master Mod needs **2.11 exactly**, not higher and
+   not lower: install the update packages from 1.05 up to 2.11 as in [Game updates](#game-updates). The
+   launcher builds the game for the update right after (about 20 minutes).
+2. **Download the mod's zip for your release of the game** from the mod's own site: the one named for
+   your game's ID (Europe `BCES00569`, North America `BCUS98114`, and so on). The game's files are locked
+   per release, so another release's zip doesn't work.
+3. In the launcher: *Help > Install a game mod (.zip)*, and pick the zip. Without the launcher:
+   `powershell -ExecutionPolicy Bypass -File GT5\scripts\install_mod.ps1 <the zip>`.
+
+What it does: it checks that the zip fits the installed game (the Master Mod's zip brings the game's two
+original files it was made from; they must be the same as yours, so a wrong version or region is refused
+before anything is changed), then copies the mod's `PDIPFS` files into
+`GT5\hdd0\game\<title ID>\USRDIR\PDIPFS`. Nothing in the zip is run. The game files it replaces are kept
+in `USRDIR\PDIPFS_before_mod`, and `USRDIR\mod_installed.txt` lists what was added.
+
+- **The first start afterwards takes longer**, and the first visit to each track or car can stutter for a
+  few seconds: the game rebuilds its lists and copies files from the disc again.
+- **To remove it:** the same button (it reads *Remove the game mod* while one is installed), or
+  `install_mod.ps1 -Remove`. The game's own files come back. A save made with the mod may not load
+  without it, so keep a copy of your save from before.
+- Extras inside a mod's zip (the Master Mod's `Debug_Cam_Addon` folder) aren't installed by this.
+- Checked with the Master Mod 2.0.0a on Europe 2.11: its menus and news, Arcade's Master level, a 16-car
+  race and a time trial at Rome. The North America zip is checked the same way by the script; the game
+  itself with it hasn't been run here (no North America disc on the test PC).
 
 <a id="dlc"></a>
 
@@ -1142,6 +1177,7 @@ so the launcher's settings win. Some useful ones:
 | `LD_SHADERS=wait` | Asynchronous shader loading off (the Display setting writes it): the picture waits for each new shader. See the [FAQ](#shaders). |
 | `LD_FG_ALWAYS=0` | Frame generation only where the game draws a 3D scene, as before 19 Nov; by default it makes frames on every screen (menus, pause, the pre-race screen, replays). |
 | `PS3_HANG_S=8` | After how many seconds without a new picture `logs\play.err` gets a `[HANG]` report (8 by default; `0` = none). |
+| `PS3_SLOW_FPS=6` / `PS3_SLOW_S=6` | A `[SLOW]` report (the same, for a game that still draws) when it draws fewer than `PS3_SLOW_FPS` frames a second for `PS3_SLOW_S` seconds in a row; not in the first minute, at most three a run (`PS3_SLOW_FPS=0` = none). |
 | `SPURS_SLOT_WAKE=0` | Wake every SPU worker thread for each job, as before v0.1.95 (by default only the one that gets the job). |
 | `GT5_NATIVE_MIXER=0`, `GT5_NATIVE_SND=0`, `GT5_NATIVE_GEO=0` | Run the translated PS3 code instead of the native PC code: the sound mixer (v0.1.91), the reverb and the EQ (v0.1.92), the geometry jobs (v0.1.93). `=2` runs both and logs any difference (slow, for testing). |
 | `GT5_MOD_<NAME>=1` | Turns on a game-code mod from `GT5\mods` (see [MODDING.md](MODDING.md)). |

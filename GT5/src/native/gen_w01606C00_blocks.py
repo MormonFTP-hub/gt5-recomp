@@ -24,7 +24,7 @@ import hashlib
 import re
 import sys
 
-EXPECT_SHA1 = "7c707417c7e29d223a60ba863d49d508e2f6867d"
+EXPECT_SHA1 = "a2e29c5b3a6c97cc09fd0d7ea66e1a119a8ec69d"
 
 FUNC = "SPU_SV void gt5_w01606C00_spu_func_00008038_sv(spu_context* ctx) {"
 LABELS = ["loc_00008120", "loc_000081C8", "loc_00008238", "loc_00008298", "loc_000083C8", "loc_000083D8",

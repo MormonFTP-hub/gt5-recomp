@@ -32,10 +32,19 @@ every other case the code is the lift's own (the dispatcher). The entries: the i
 `spu_drain_call(ctx, 0x...)`: where a waiting host frame must see the branch), the runtime's service
 addresses (LS 0, 0x9C0, 0x9D0, 0xA00, 0xA2C, 0xA70, 0x3FEC0, 0x3FF00), and, for a WWS job's code, anything
 outside the span it is registered with. Which images: the WWS jobs' code, registered in spu_jobs.c as
-resident regions (spu_overlay_register_verified_region), and the WWS job manager (the image whose
-registered entry is 0xA00, the policy module). The other images registered there (SPURS job binaries
-entered at LS 0) keep the dispatcher: few register branches, and where their code sits and which frames
-wait inside it is not decided by their own code. Other lifts (not in spu_jobs.c) are copied unchanged.
+resident regions (spu_overlay_register_verified_region), and every image registered as a job binary
+(spu_workload_register_img: the WWS job manager entered at 0xA00, the SPURS job binaries entered at LS 0;
+n_static, 22 Nov 2026, before only the job manager): those run as the context's own image (spurs_job.c /
+spu_workload.c set ctx->image_id to it), which is what gt5_dbi_confirm's kind 0 checks -- no resident code
+slot over the target, the context's image, no overlay, no task -- so a branch goes direct only where the
+dispatcher resolves the same function. A waiting host frame inside such an image is at one of its own
+return points (spu_link / spu_drain_call: never in a switch) or at a service address (the job return
+0x3FF00, LS 0: never in a switch). Other lifts (not in spu_jobs.c) are copied unchanged.
+n_jobmgr, 22 Nov 2026: a target outside the image's own entries goes on to the switch of the image the
+dispatcher would resolve it in (gt5_dbi_route: a WWS job's calls of the job manager's API, the manager's call of
+a job), and the policy module's call of its interrupt handler's register stub (0x3FEC0) runs the stub natively
+(spu_wws_irq_stub_direct) where the dispatcher's checks before it could not act. GT5_DIRECT_BI_XIMAGE=0 at run
+time: own entries only.
 Lift text this depends on (a re-lift that changes it leaves those branches with the dispatcher: the
 counts printed show it): the two statements above, the table entry form, `spu_link(0x...)`,
 `spu_drain_call(ctx, 0x...)`, `#include "spu_recomp.h"`, and `SPU_SV void gt5_<image>_spu_func_<ADDR>_sv(`
@@ -48,7 +57,8 @@ SERVICE = {0x0, 0x9C0, 0x9D0, 0xA00, 0xA2C, 0xA70, 0x3FEC0, 0x3FF00}
 
 
 def image_info(jobs_c, image):
-    """(image id, kind, lsa, size) from src/gen/spu_jobs.c, or None when the image gets no direct branches."""
+    """(image id, kind, lsa, size, policy module) from src/gen/spu_jobs.c, or None when the image gets no direct
+    branches. The policy module is the image registered with its entry at 0xA00 (the WWS job manager)."""
     t = open(jobs_c, encoding="utf-8", errors="replace").read()
     m = re.search(r"spu_begin_image\((\d+)\);\s*gt5_%s_spu_recomp_register\(\);(.*?)(?=spu_begin_image|\Z)" % image, t, re.S)
     if not m:
@@ -56,14 +66,15 @@ def image_info(jobs_c, image):
     iid, rest = int(m.group(1)), m.group(2)
     r = re.search(r"spu_overlay_register_verified_region\(0x[0-9A-Fa-f]+u, 0x([0-9A-Fa-f]+)u, 0x([0-9A-Fa-f]+)u, (\d+)", rest)
     if r and int(r.group(3)) == iid:
-        return iid, 1, int(r.group(1), 16), int(r.group(2), 16)
-    if re.search(r"spu_workload_register_img\([^,]+, gt5_%s_spu_func_00000A00, %d," % (image, iid), rest):
-        return iid, 0, 0, 0x40000
+        return iid, 1, int(r.group(1), 16), int(r.group(2), 16), False
+    r = re.search(r"spu_workload_register_img\([^,]+, gt5_%s_spu_func_([0-9A-F]{8}), %d," % (image, iid), rest)
+    if r:
+        return iid, 0, 0, 0x40000, int(r.group(1), 16) == 0xA00
     return None
 
 
 def transform_direct_bi(text, image, info):
-    iid, kind, lsa, size = info
+    iid, kind, lsa, size, pm = info
     tab = [(int(a, 16), f) for a, f in re.findall(r"\{ 0x([0-9A-F]{8})u, gt5_%s_spu_func_([0-9A-F]{8}), \"" % image, text)]
     # each entry's code by its _sv name: defined here, or (a hooked native) named here and defined by the native
     have = set(re.findall(r"\bgt5_%s_spu_func_([0-9A-F]{8})_sv\b" % image, text))
@@ -95,35 +106,74 @@ def transform_direct_bi(text, image, info):
             '#include "gt5_direct_bi.h"\n'
             f"static gt5_dbi_image {d};\n"
             f"SPU_SV void {disp}(spu_context* ctx);\nSPU_SV void {dchk}(spu_context* ctx);\n"
-            f"SPU_SV void {call}(spu_context* ctx);\nSPU_SV void {cchk}(spu_context* ctx);\n")
+            f"SPU_SV void {call}(spu_context* ctx);\nSPU_SV void {cchk}(spu_context* ctx);\n"
+            + ("int spu_pm_service(spu_context* ctx);   /* spu_channels.c */\n" if pm else ""))
+    # The policy module (n_static, 22 Nov 2026) calls the SPURS kernel's two services through the kernel context
+    # (`lqa $r2, 0x1E0; bisl $r0, $r2`: exitToKernel 0x9C0, selectWorkload 0x9D0). The dispatcher serves them
+    # with spu_pm_service after nothing but its interrupt-return check, which only acts while an interrupt's
+    # registers are saved: so a call there is served directly in a policy-module run with none saved.
+    svc = ("    if (__builtin_expect((ctx->pc == 0x9C0u || ctx->pc == 0x9D0u) && ctx->policy_mode && !ctx->irq_saved, 0) &&\n"
+           "        spu_pm_service(ctx)) return;\n") if pm else ""
+    # The policy module's interrupt handler calls the register save / restore stub the job manager writes at
+    # 0x3FEC0 (`brsl $r79, 0x3FEC0`: the lift has a function there that only hands the address to the
+    # dispatcher, which runs the stub natively). n_jobmgr, 22 Nov 2026: the stub runs right there, with the
+    # dispatcher's result (ctx->pc = its return, the trampoline set: the waiting drain takes it), where the
+    # dispatcher's own checks before it could not act (gt5_dbi_step_ok: not the interrupt-return point, no
+    # interrupt pending, not a first step); else the dispatcher as before.
+    nstub = 0
+    if pm:
+        stub_re = re.compile(r"(SPU_SV void gt5_%s_spu_func_0003FEC0_sv\(spu_context\* ctx\) \{\r?\n    )"
+                             r"ctx->pc = 0x3FEC0u; g_spu_trampoline_fn = spu_indirect_branch; return;" % image)
+        text, nstub = stub_re.subn(
+            lambda m: m.group(1) + (f"ctx->pc = 0x3FEC0u; if (__builtin_expect({d}.mode != 0, 1) && ctx->policy_mode && "
+                                    "gt5_dbi_step_ok(ctx)) (void)spu_wws_irq_stub_direct(ctx); "
+                                    "g_spu_trampoline_fn = spu_indirect_branch; return;"), text)
     pos = heads.start()
     text = text[:pos] + decl + text[pos:]
     rows = ",\n".join(f"    {{ 0x{a:X}u, gt5_{image}_spu_func_{a:08X} }}" for a in ents)
-    bcases = "\n".join(f"        case 0x{a:X}u: __attribute__((musttail)) return gt5_{image}_spu_func_{a:08X}_sv(ctx);" for a in ents)
-    ccases = "\n".join(f"        case 0x{a:X}u: gt5_{image}_spu_func_{a:08X}_sv(ctx); return;" for a in ents)
+    bcases = "\n".join(f"            case 0x{a:X}u: __attribute__((musttail)) return gt5_{image}_spu_func_{a:08X}_sv(ctx);" for a in ents)
+    ccases = "\n".join(f"            case 0x{a:X}u: gt5_{image}_spu_func_{a:08X}_sv(ctx); return;" for a in ents)
+    lo, hi = ents[0], ents[-1] + 4
+    # n_jobmgr, 22 Nov 2026: a target outside this image's entries goes on to the image the dispatcher would
+    # resolve it in (gt5_dbi_route: a WWS job's call of the job manager's API, the manager's call of a job),
+    # through that image's own switch and confirmation; anything else is the dispatcher's, as before.
+    route = (f"        const gt5_dbi_image* _r = gt5_dbi_route(ctx, {kind});\n"
+             "        if (_r) {\n"
+             "            if (_r->mode == 1) { %s }\n"
+             "            if (_r->mode == 2) { %s }\n"
+             "        }\n")
     text += (f"\n/* spu_native_patch.py --direct-bi: this image's entries (image {iid}, "
              + (f"resident code at 0x{lsa:X}+0x{size:X}" if kind == 1 else "the context's own image") + ") */\n"
              f"static const gt5_dbi_ent {d}_tab[] = {{\n{rows}\n}};\n"
-             f"static gt5_dbi_image {d} = {{ 0, \"{image}\", {iid}, {kind}, 0x{lsa:X}u, 0x{size:X}u, 0x{ents[0]:X}u, 0x{ents[-1] + 4:X}u, "
-             f"{d}_tab, {len(ents)}u }};\n"
+             f"static gt5_dbi_image {d} = {{ .mode = 0, .name = \"{image}\", .image_id = {iid}, .kind = {kind}, "
+             f".lsa = 0x{lsa:X}u, .size = 0x{size:X}u, .lo = 0x{lo:X}u, .hi = 0x{hi:X}u, .tab = {d}_tab, .n = {len(ents)}u, "
+             f".branch_sv = {disp}, .branch_chk_sv = {dchk}, .call_sv = {call}, .call_chk_sv = {cchk} }};\n"
              f"__attribute__((constructor)) static void {d}_init(void) {{ gt5_dbi_register(&{d}); }}\n"
              "/* a branch: ctx->pc holds the target */\n"
              f"SPU_SV void {disp}(spu_context* ctx) {{\n"
-             f"    if (__builtin_expect(gt5_dbi_ready(ctx, &{d}), 1)) {{\n"
-             "        switch (ctx->pc) {\n" + bcases + "\n        default: break;\n        }\n    }\n"
+             f"    if (__builtin_expect(ctx->pc - 0x{lo:X}u < 0x{hi - lo:X}u, 1)) {{\n"
+             f"        if (__builtin_expect(gt5_dbi_ready(ctx, &{d}), 1)) {{\n"
+             "            switch (ctx->pc) {\n" + bcases + "\n            default: break;\n            }\n        }\n"
+             "    } else {\n"
+             + route % ("__attribute__((musttail)) return _r->branch_sv(ctx);", "__attribute__((musttail)) return _r->branch_chk_sv(ctx);")
+             + "    }\n"
              "    g_spu_trampoline_fn = spu_indirect_branch;\n}\n"
              f"SPU_SV void {dchk}(spu_context* ctx) {{\n"
              f"    if (gt5_dbi_ready(ctx, &{d}) && !gt5_dbi_check(ctx, &{d})) {{ g_spu_trampoline_fn = spu_indirect_branch; return; }}\n"
              f"    __attribute__((musttail)) return {disp}(ctx);\n}}\n"
              "/* a call (host_depth already counted): the entry's function as the dispatcher's fast path calls it */\n"
-             f"SPU_SV void {call}(spu_context* ctx) {{\n"
-             f"    if (__builtin_expect(gt5_dbi_ready(ctx, &{d}), 1)) {{\n"
-             "        switch (ctx->pc) {\n" + ccases + "\n        default: break;\n        }\n    }\n"
+             f"SPU_SV void {call}(spu_context* ctx) {{\n" + svc +
+             f"    if (__builtin_expect(ctx->pc - 0x{lo:X}u < 0x{hi - lo:X}u, 1)) {{\n"
+             f"        if (__builtin_expect(gt5_dbi_ready(ctx, &{d}), 1)) {{\n"
+             "            switch (ctx->pc) {\n" + ccases + "\n            default: break;\n            }\n        }\n"
+             "    } else {\n"
+             + route % ("_r->call_sv(ctx); return;", "_r->call_chk_sv(ctx); return;")
+             + "    }\n"
              "    spu_indirect_branch(ctx);\n}\n"
              f"SPU_SV void {cchk}(spu_context* ctx) {{\n"
              f"    if (gt5_dbi_ready(ctx, &{d}) && !gt5_dbi_check(ctx, &{d})) {{ spu_indirect_branch(ctx); return; }}\n"
              f"    __attribute__((musttail)) return {call}(ctx);\n}}\n")
-    return text, sites + calls, len(ents)
+    return text, sites + calls + nstub, len(ents)
 
 
 def main():

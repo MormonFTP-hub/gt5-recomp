@@ -950,6 +950,68 @@ void keys_screen(const PadEdges& pad)
                 "这些行是 GT5 自己的手柄按钮：在游戏选项中更改按钮的功能后，对应的按键也随之改变。“左视角”“右视角”和“闪灯”默认没有按钮：先在游戏中分配一个，再在这里设置按键。"));   // (launcher) kb.views, shortened
 }
 
+// text contains part (both as typed), ignoring case
+static bool contains_nocase(const char* text, const char* part)
+{
+    const size_t n = strlen(part);
+    if (!n) return false;
+    for (const char* t = text; *t; t++)
+        if (!_strnicmp(t, part, n)) return true;
+    return false;
+}
+
+// Pedals or buttons that are a USB device of their own (a direct-drive base with separate pedals, a rim
+// or a button box on its own USB): which device they're read from. Enter or Cross: the next game
+// controller found; Delete or Triangle: the wheel's own. The rows below then map that device's axes and
+// buttons (wheel_host_win.c reads them from it).
+static void wheel_device_rows(const PadEdges& pad, const gt5_menu_wheel& w, bool have)
+{
+    static const char* const key[2] = { "PS3_WHEEL_PEDAL_DEVICE", "PS3_WHEEL_BUTTON_DEVICE" };
+    const char* const label[2] = { T("Pedals from", "踏板来自"), T("Buttons from", "按钮来自") };
+    const char* help = T("Only for pedals or wheel buttons that plug in with their own USB cable. Enter or Cross: the next device found. Delete or Triangle: the wheel's own. Then set the pedals and buttons below.",
+                         "仅用于单独插 USB 线的踏板或方向盘按钮。Enter 或 ✕：下一个找到的设备。Delete 或 △：方向盘自带的。然后在下方设置踏板和按钮。");
+    char cur[2][128], val[2][192];
+    float max_a = 0, max_c = 0;
+    for (int x = 0; x < 2; x++) {
+        gt5_setting_stored(key[x], cur[x], sizeof cur[x]);
+        if (!cur[x][0]) snprintf(val[x], sizeof val[x], "%s", T("The wheel", "方向盘本身"));
+        else {
+            bool there = !have;   // no list to tell without a wheel
+            for (int i = 0; i < w.devices && i < GT5_MENU_WHEEL_DEVICES; i++)
+                if (contains_nocase(w.device[i], cur[x])) there = true;
+            snprintf(val[x], sizeof val[x], there ? "%s" : T("%s (not connected)", "%s（未连接）"), cur[x]);
+        }
+        const float wa = ImGui::CalcTextSize(label[x]).x, wc = ImGui::CalcTextSize(val[x]).x;
+        if (wa > max_a) max_a = wa;
+        if (wc > max_c) max_c = wc;
+    }
+    const MapCols cols = plan_map(max_a, 0.0f, max_c);
+    for (int x = 0; x < 2; x++) {
+        bool focused = false, rclick = false;
+        const bool pressed = map_row(2000 + x, GT5_WHEEL_BUTTONS + 3 + x, label[x], "", val[x], cur[x][0] ? kText : kDim, false, cols,
+                                     &focused, &rclick);
+        if (ui.bind == BIND_NONE) {
+            if (pressed && have) {
+                // the game controllers found, the wheel itself left out; after the last one: the wheel's own
+                const char* opt[GT5_MENU_WHEEL_DEVICES];
+                int n = 0, at = -1;
+                for (int i = 0; i < w.devices && i < GT5_MENU_WHEEL_DEVICES; i++) {
+                    if (!w.device[i][0] || !_stricmp(w.device[i], w.name)) continue;
+                    if (cur[x][0] && !_strnicmp(w.device[i], cur[x], sizeof w.device[i] - 1)) at = n;   // names kept to 63 bytes
+                    opt[n++] = w.device[i];
+                }
+                const char* next = at + 1 < n ? opt[at + 1] : "";
+                gt5_setting_set(key[x], next);
+                changed();
+            } else if (focused && (pad.triangle || ImGui::IsKeyPressed(ImGuiKey_Delete, false))) {
+                gt5_setting_set(key[x], "");
+                changed();
+            }
+        }
+        if (focused) set_help_text(help);
+    }
+}
+
 void wheel_screen(const PadEdges& pad)
 {
     heading(T("Wheel buttons and pedals", "方向盘按钮和踏板"));
@@ -961,9 +1023,17 @@ void wheel_screen(const PadEdges& pad)
     if (have) ImGui::TextColored(kLive, "%s  %s", T("Reading:", "正在读取："), w.name[0] ? w.name : T("a steering wheel", "方向盘"));
     else ImGui::TextColored(kNext, "%s", T("No steering wheel found, so a button can't be picked by pressing it. Plug the wheel in before starting the game.",
                                            "未找到方向盘，因此无法通过按下按钮来选择。请在启动游戏前连接方向盘。"));
+    if (have && w.pedals[0])
+        ImGui::TextColored(w.pedals_found ? kLive : kNext, "%s  %s%s", T("Pedals:", "踏板："), w.pedals,
+                           w.pedals_found ? "" : T(" (not connected)", "（未连接）"));
+    if (have && w.buttons[0])
+        ImGui::TextColored(w.buttons_found ? kLive : kNext, "%s  %s%s", T("Buttons:", "按钮："), w.buttons,
+                           w.buttons_found ? "" : T(" (not connected)", "（未连接）"));
     ImGui::PopTextWrapPos();
     note_text(T("Changes here apply after a restart.", "此处的更改在重启游戏后生效。"));
     ImGui::Dummy(ImVec2(0, S(4)));
+    wheel_device_rows(pad, w, have);
+    ImGui::Dummy(ImVec2(0, S(6)));
 
     // a wait ends by itself
     if ((ui.bind == BIND_WHEEL_BUTTON || ui.bind == BIND_WHEEL_PEDAL) && now_s() - ui.bind_t0 > 10.0) bind_cancel();

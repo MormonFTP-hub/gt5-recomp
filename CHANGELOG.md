@@ -7,7 +7,75 @@ release on the tested rig in [STATUS.md](STATUS.md) unless a day says otherwise.
 > or repeated frames (fixed on 4 Nov and 9 Nov), so treat them as rough before-and-after comparisons.
 > From 9 Nov on, numbers are the game's own frames.
 
+## 23 Nov 2026
+
+🏷️ Released as **v0.1.111**
+
+Everything from test builds 26 to 33 in one release. The update converts the game code again once and
+rebuilds (about 10 to 20 minutes); saves and settings stay. In short, with the details below and under 22 Nov:
+
+⚡ **All SPU code runs as converted code, and the first geometry jobs are native**
+🏁 **Shorter stalls while the game loads and streams data** (a likely cause of Rome's 3-5 fps, #52)
+🧰 **A batch of small speed and stability fixes**: waiting threads, SPU job order, drawing
+🧩 **The GT5 Master Mod installs from the launcher** (Help > Install a game mod)
+🔁 **Game updates: the launcher builds the game by itself afterwards**, and 2.xx gets the faster SPU code too
+🎮 **Wheels whose pedals or buttons are a USB device of their own** (#55)
+💾 **Saves go into the game's own folder on every PC**
+🖥️ **Frame generation on 60 Hz screens** (#53), Vertical sync in the launcher, a `[SLOW]` report in the log
+
+- **Wheels whose pedals or buttons are a USB device of their own** ([#55](https://github.com/MormonFTP-hub/gt5-recomp/issues/55)): a direct-drive base with separate pedals, a rim or a button box on its own USB. Until now the port read the steering, the pedals and the buttons from one device, the base. Now the pedals and the buttons can each come from another device, as RPCS3's G27 lets each part come from any device; the base keeps the steering and the force feedback.
+  - In the game: **F1** > **Controls** > **Wheel buttons and pedals** has **Pedals from** and **Buttons from**, which step through the controllers found. The pedal and button rows below then set that device's pedals and buttons by pressing them, as before.
+  - Or in `settings.bat`: `PS3_WHEEL_PEDAL_DEVICE` and `PS3_WHEEL_BUTTON_DEVICE`, part of the device's name or its `VID:PID`. Unless `PS3_WHEEL_PEDALS` names them, a pedal device's first three axes are throttle, brake and clutch.
+  - That device is only read, never held: its own software and other programs keep working. Each one gets the same care as the base: rest points from its first real report, pedals released and buttons up while it doesn't answer, looked for again when it's unplugged.
+  - Not tried with real separate pedals yet (the test PC has no wheel): `PS3_WHEEL_TRACE=1` logs the pedals' device's axes too.
+- **Saves go into the game's own folder on every PC.** On one player's PC the game saved straight into `savedata\` instead of `savedata\BCES00569-GAME`, and then found nothing to load at the next start. The port handed the save folder's name on with the wrong kind of address, which only goes wrong where Windows puts the game's memory low in the address space (as with Windows' memory randomisation switched off): there the name came out empty. Every other player's log has the right folder.
+  - If you've been copying your save into `BCES00569-GAME` by hand: from this build the game saves there itself. Once it has saved once, the leftover `GT5.0`, `ICON0.PNG` and `PIC1.PNG` straight in `savedata\` can go.
+- **Linux: the build links again** ([#20](https://github.com/MormonFTP-hub/gt5-recomp/issues/20)). Since test build 26 the converted SPU code has a second file per job (`spu_anyaddr.c`), which the Linux build didn't list.
+  - For the black window that stops at `[cellAudio] Init()`: `play.err` now names each step of starting the sound (SDL's sound part, its driver, opening the device, playing), so a log shows which one it stops in. Not fixed yet; `SDL_AUDIODRIVER=dummy` starts the game without sound meanwhile.
+
+- **Shorter stalls while the game loads and streams data**, a likely cause of Rome dropping to 3-5 fps ([#52](https://github.com/MormonFTP-hub/gt5-recomp/issues/52)). While it loads, GT5's job manager repeats one small memory transfer a fixed number of times (375). The port took anything past 256 repeats for a job that was stuck waiting, and slept between the rest, a millisecond at a time by Windows' timer, with the frame waiting for it: about 140 ms per such wait at best, and about 600 ms where Windows gives the game a coarse timer (a covered or minimised window). Now nothing sleeps in the first 10 ms of such a wait, and a wait that really is long naps half a millisecond at a time on a precise timer.
+  - Measured on Europe 2.11 with the Master Mod, from the menus into a 16-car race at Rome: slow frames added up to 16-22 s before and 7 s after, and the fixed-count waits went from 60-600 ms each to under a millisecond.
+  - Not yet confirmed by a player at the part of Rome where it drops: please try it there.
+  - The GT6 port [Project Grand Tourer Advanced](https://github.com/PrimeTimerer/Project-Grand-Tourer-Advanced) had found the coarse clock in the same code of the shared engine; reading their fix is what pointed here.
+- **A batch of small fixes that add up**, most of them found by comparing with the GT6 port [Project Grand Tourer Advanced](https://github.com/PrimeTimerer/Project-Grand-Tourer-Advanced), which had met the same things in the shared engine:
+  - **Waiting and threads:**
+    - A thread woken from a condition wait now gets its lock handed over, as on the PS3. Before, another thread could take the lock first and a wake-up could be lost: a possible cause of the rare freezes on loading screens (`PS3_LWCOND_HANDOFF=0` is the old way).
+    - A game thread that ended could leave its slot marked as still in use, for good. After enough of them the game could start no more threads.
+    - Sleeps of a millisecond or more use a precise timer; before, they were as long as Windows' timer tick, which is coarse when the game's window is covered.
+    - The frame loop asks Windows for window messages at most once a millisecond (it asked thousands of times a second), and three settings it read on every pass are read once.
+  - **SPU jobs:** the job workloads take the SPUs in the order of their priorities, as the PS3's own scheduler does (ours took turns; in a 16-car race the game's highest-priority workload found every SPU taken 1,500-2,000 times a second). Two small speed-ups in the converted job code (whole-number to float conversion, and the check after every call).
+  - **Drawing:**
+    - A full vertex cache gives up its least-used eighth; it used to wait for the graphics card and empty all of itself, then convert everything again.
+    - The memos for shader programs hold 1024 vertex programs and 2048 fragment programs (8 and 128 before); the pipeline lookup went from 0.85 to 0.65 ms a frame in a 12-car race on the test PC.
+    - Draws whose indices cover nearly all of their vertex range skip the de-duplication step.
+    - Textures and render targets are found through an index, not by scanning their lists.
+    - The command ring ends one word early, as the PS3's library leaves it.
+  - **Launcher:** after a game update is installed, the launcher builds the game for it by itself (it used to say "run setup.bat"). `Update.bat` no longer stops at "Already on ..." when the game's executable has changed since the last build.
+  - Checked on Europe 1.00 (the driven race and the picture check: the drawing thread's work per frame went from 5.1-5.6 to 4.5-5.0 ms, the frame rate itself is the same 55 there) and on Europe 2.11 with the Master Mod at Rome. Each part can be switched off by itself if something turns up.
+- **The GT5 Master Mod installs from the launcher**: **Help** > **Install a game mod (.zip)** (or `GT5\scripts\install_mod.ps1 <the zip>`). Until now it took installing the mod in RPCS3 and copying folders over by hand. How to: README, [Game mods](README.md#game-mods).
+  - It needs the game at update 2.11 and the mod's zip for your release of the game (Europe, North America ...). The zip is checked against the installed game first: a wrong version or another region's zip is refused before anything is changed.
+  - The game files the mod replaces are kept, so the same button removes the mod again (it reads **Remove the game mod** while one is installed).
+  - Checked with the Master Mod 2.0.0a on Europe 2.11: the result is file for file what copying the mod by hand gives, the game shows the mod's menus and news and Arcade's Master level, and a 16-car race and a time trial at Rome ran at 55-58 fps on the test PC. Removing it gives back the plain 2.11 files exactly. The North America zip passes the same checks against its own original files and is refused on the European game; the North America game itself hasn't been run here.
+  - With the mod the game copies files from the disc again the first time each track or car is used, and stutters while it does (slow frames of 0.3 to 1 s for some seconds on the test PC).
+
 ## 22 Nov 2026
+
+- **All SPU code runs as converted code**: nothing is interpreted during play any more (it was about 186,000 instructions a second), every address of every job image can be entered as converted code, and run-time branch look-ups are down by about nine tenths. Every copy converts the game code again once after this update (a few minutes), then rebuilds (the build is about two and a half minutes longer).
+- **Three geometry jobs run as native code**, generated on your PC at build time from your own game files (Europe 1.00): the car cull job about 12 % less time per job, two others 38 % and 4 %. The model drawing job stays as converted code: with the static conversion it is faster that way.
+- **The car cull job's batch routine is hand-written native code** (about twice as fast).
+- **Fix for a rare freeze** at start-up or on a loading screen: a newly added job workload could lose its limit to a job thread writing the same memory at that instant, and then never ran.
+- **Missing system functions** filled in. One was a real fault: the music decoder's memory was set up at address 0.
+- 36 small maths and string functions of the main-CPU code as native code, and the way to add more without converting the game again.
+- Groundwork, switched off for now: the game can read the shader programs in its own files (about 12,800 found in a test) without filling the game's hard-disk cache. Preparing them before the game starts is not finished.
+- **Frame generation on 60 Hz screens** ([#53](https://github.com/MormonFTP-hub/gt5-recomp/issues/53)), two fixes that go together:
+  - At **Frame rate 30** the game draws 31-32 frames a second, which on a 60 Hz screen counted as "no room" for a made frame, so frame generation switched itself off at exactly the setting it is for. Where the drawn rate is within 8 % of its steady share of the screen, the room is now counted at that share (30 drawn, 60 shown).
+  - When it did make frames, a 60 Hz screen could settle at **half the drawn rate** (15 drawn, the game waiting 55-83 % of the time). The frames were paced on the measured time between drawn frames, which included the game's wait for the presenter: a present that missed a refresh waited for the next, the wait made the step longer, and it fed itself. Frames are now paced on the game's own frame time, without that wait.
+  - Worked out from players' logs; not yet tried on a 60 Hz screen.
+- **Linux: SDL's start-up one part at a time** ([#20](https://github.com/MormonFTP-hub/gt5-recomp/issues/20)). The sound, the controllers and the Vulkan window started SDL on three threads at once, which SDL2 doesn't allow; on one PC the game stopped for good at the sound's start (black window). Not yet tried on that PC.
+- **A `[SLOW]` report in the log** ([#52](https://github.com/MormonFTP-hub/gt5-recomp/issues/52)): when the game keeps drawing but under 6 frames a second for 6 seconds, `logs\play.err` says which threads are busy and what they run, as the `[HANG]` report does for a stop. For Rome's 3-5 fps on 2.11 + Master Mod. `PS3_SLOW_FPS=0` turns it off.
+- **Launcher: Vertical sync** on the Display page, the same setting as in the game's menu ([#48](https://github.com/MormonFTP-hub/gt5-recomp/issues/48)).
+- **Game updates (2.01, 2.11, 2.17) get the converted and native SPU code too.** The lists behind the lines above named each job by its address in the 1.00 disc's executable, and the updates moved every job: on an update about 70,000 instructions a second were still interpreted and the native car cull job was not used. Jobs are now recognised by their contents, whatever the release. Checked on Europe 2.11 in an Arcade race at Rome: nothing interpreted, the native cull job runs, the picture is right. 2.17 carries 2.11's jobs byte for byte; 2.01 and 2.17 themselves have not been run yet. Every copy converts the SPU code again once after this update (the 1.00 discs get the same code as before).
+- **Installing game updates with the newest RPCS3.** RPCS3 0.0.43 asks its question differently (an Install button, with "Precompile caches" ticked), so **Help** > **Install a game update or DLC (.pkg)** stopped at "RPCS3 didn't offer to install it". It answers that form too now, with every tick box cleared (no shortcuts, no cache precompiling). Checked by installing Europe 1.06 to 2.11, 20 packages in a row.
 
 🏷️ Released as **v0.1.110**
 

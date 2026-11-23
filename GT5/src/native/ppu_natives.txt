@@ -1,0 +1,48 @@
+# Native PPU functions (scripts/ppu_native_patch.py; run-time switch and counters: src/native/ppu_native.cpp).
+#
+#   <ADDR8> leaf <SHA-1 of the lifted function's text>
+#
+# leaf: the native form is made at build time from this copy's own lifted text of the function by
+# src/native/gen_ppu_leaf.py (its registers held in C locals, its VMX values in host order); no lifted code is
+# shipped. The SHA-1 (of the `void func_<ADDR8>(ppu_context* ctx) {` line to its closing brace, LF line ends)
+# pins the text each was proven on, every register and the guest memory compared with the lifted function on
+# a million or more random and edge inputs; with any other text (another release or update, another lifter)
+# the function stays lifted. Chosen from the PPU profile (D65): the leaves whose native form measured at least
+# 1.15x the lifted one's speed.
+# Europe 1.00 (BCES00569), lift of 16 Nov 2026.
+008A99AC leaf 9a51b797d12727acc985b15b737bc12403ad2afa
+008A9A50 leaf b5c4cf2e0330dd07fa2cc05d9ec42f14e7c3b3bb
+008A9AFC leaf 289da6ca633e7282296a464065197b094cbe66aa
+0090AE6C leaf d040610e684d0de5e2ee7b6c61b05b194fa276eb
+0090AF94 leaf 9d7fe66ad685245412f9af1831426f573f381e9d
+00949C78 leaf fc6e1520f2f3562db8917e8b63c563a24cf44d5a
+009565A8 leaf da451160bbcfb70dffc2736d8dffb226d3fd8333
+0095CA0C leaf 7fa59d03a4c99be0d794783d3200881f7a168e8e
+0095E658 leaf 3692a6ff6d1b2b82418368c35080f00b3ffbba25
+0095E76C leaf 25eef0f2f9eaa0149db74a85a82c72e760698439
+00A27AB8 leaf 790074b2294c41ea630f538084b1303a1a687734
+00C0E9C0 leaf 0fc3e9da580e273a92dc5965de5c5adead8cf8e9
+00C68FA8 leaf ce41a0c878eb307c3d664b2da72f2d8fff156f85
+00C693D4 leaf 8e91f733eda2ad0ddb0237ff78d34549417c1bca
+00C69604 leaf ad5701510190dc320ef47b764198b0d12a51912f
+00C69928 leaf eff4104e4627b9ee46b8b67cd70cc52c9d93def7
+00C69A34 leaf d4cf690af3d0e877e9090d6d04fb35395113fd32   # vector maths: 4x4 matrix multiply
+00C69B04 leaf 5be8bb422dcd7c32442ce18fee3cfd34d3c3e6f1
+00C69C6C leaf 9d997cbdc31f34874c178b7aad44073993778198
+00C6A170 leaf c5dd9869ad3bd36b6224e884bf6c66548fc603a1   # vector maths
+00C6A2E8 leaf a0ffd58539b175ef668a4c01ebc0371717e120df   # vector maths
+00C6A364 leaf 79a27418a00e98777d793900ee94e075d3464dd2   # vector maths
+00C6A634 leaf ecab1f4cda9a0885ba8be1e70165ba3586c52965
+00C6B274 leaf 6f208fbe16a460e4e6f1610e9db676a6e6a8d228
+00C6BE2C leaf 81654fb6a10ca508af002acb280d98f2973da72d
+00CC6FA8 leaf 1ee242508abd81dc9fc81fb5c970605b5a9e0893
+00CDF604 leaf b14488627e5cba6e2a0733275b3bda93ec5cf7a8
+00CDF738 leaf 7a1f3b6092106e7d477fd72732933981fb05f007
+00CE03D0 leaf 82d4bb9dd78a0df2eb6b2c73ddb260d451928724
+00CE0ABC leaf bb0049cef8fa7b576ac62b1ce5b432a8eb028b01
+00CF9614 leaf 4e8195fd26b1b0d1cb572da21b525292a67cc156
+00D00288 leaf d59d873a5d1cf0b504117ba54a08f089c1a5317f   # strcmp
+00D007F0 leaf 6b28ecfcb9b4147be84500be18e2a76edec62c2b
+00E1D4E4 leaf d40ea074b0735cf6c71af7f0c2241456d081a252
+00E2D038 leaf 8bff7dd02313cde82edc04cf0dff2d3b09b2e87f
+00F09FC0 leaf 512d6db2b6c4f3dbf60f6fe30ac01944c61f03e9

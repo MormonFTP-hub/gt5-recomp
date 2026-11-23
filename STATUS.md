@@ -1,6 +1,6 @@
 # 📋 Current state
 
-*Last updated: 18 November 2026*
+*Last updated: 23 November 2026*
 
 ## 🟢 Playable
 
@@ -113,8 +113,8 @@ performance matters more than the graphics card.
 ## ❌ Not supported yet
 
 - Ultrawide on releases other than the European disc 01.00: they keep the 16:9 picture for now
-- Game updates other than 2.01, 2.17 (US, Europe) and 2.11 with the GT5 Master Mod (US, a player's
-  report: menus, the mod's debug menu, an A-Spec race) are untried. Each can change the game's SPU programs again; setup's
+- Game updates other than 2.01, 2.17 (US, Europe) and 2.11 with the GT5 Master Mod (Europe: run on the test PC,
+  menus, Arcade's Master level and races at Rome; US: a player's report, menus, the mod's debug menu, an A-Spec race) are untried. Each can change the game's SPU programs again; setup's
   `SPU jobs found in EBOOT.elf: N of 15` says whether yours are all known
 
 ## ⚠️ Known issues
@@ -134,6 +134,7 @@ performance matters more than the graphics card.
 
 The last few days; the full history since 1 November is in [CHANGELOG.md](CHANGELOG.md).
 
+- **23 Nov 2026:** all SPU code runs as converted code (nothing interpreted during play) and the first geometry jobs are native; shorter stalls while the game loads and streams data (a likely cause of Rome's 3-5 fps on 2.11 with the Master Mod, not yet confirmed by a player); a batch of small speed and stability fixes found by comparing with the GT6 port Project Grand Tourer Advanced; the GT5 Master Mod installs from the launcher (**Help** > **Install a game mod**; run here on Europe 2.11, North America not run here); the launcher builds the game by itself after a game update; wheels whose pedals or buttons are a USB device of their own (not yet tried on real hardware); saves go into the game's own folder on every PC; frame generation on 60 Hz screens (not yet tried on one) (v0.1.111, converts the game code again once).
 - **20 Nov 2026:** shaders no longer stall the game: they are prepared before the game starts and built in the background on all cores, and with Asynchronous shader loading (on by default, DirectX 12) an object whose shader is not ready yet is drawn at once by a general stand-in (a first race on a PC that has never played: about 90 draws missing for a moment, where about 2,500 were, and 0.3 s of waiting in all); frame generation makes frames on every screen (menus, replays, pause); the controller buttons are the game's own again by default, with the triggers layout as a choice; Button symbols: Xbox buttons or your keyboard keys in the game's menus (a choice in Controls); the launcher offers Save a report after a crash or freeze (logs with your user name and folders taken out); Frame rate 60 or 30; a faster start with a big shader cache (v0.1.109).
 - **18 Nov 2026:** the picture fills the screen; sharper shadows (new Shadows setting) and textures; DLSS / DLAA on every 3D screen; controller triggers are throttle and brake; Esc asks before quitting, F1 pauses the race; sound follows the Windows output device, with Volume; the window starts borderless and is sharp at any Windows scaling; Vulkan gets the in-game menu and is set up at install; a resizable launcher and an installer that checks the PC first (v0.1.108).
 - **17 Nov 2026:** NVIDIA DLSS / DLAA anti-aliasing (optional, fetched from NVIDIA by the launcher; DLAA costs 1-2 fps on an RTX 4070 Ti SUPER), frame generation presented evenly and a new generator that uses the game's real motion, menu rows that grey out when they don't apply, F8 snapshot for bug reports (v0.1.101, DirectX 12, no re-lift); in-game menu: cockpit view, mouse steering and force feedback settings apply while playing (v0.1.100, no re-lift); render resolution 1080p to 5K whatever the game's mode (4K at 57-60 fps in a race on an RTX 4070 Ti SUPER) and a settings menu inside the game on F1 or Select + Start, most settings applied while playing (v0.1.99, DirectX 12, no re-lift); frame rate multiplier: 2x/3x/4x frame generation on screens faster than 60 Hz, about 118 frames a second on a 165 Hz screen with the game at 57 (v0.1.98, DirectX 12, no re-lift); fix for new cars no longer being drawn after a long session through the dealerships (DirectX 12 pipeline table full), and a picture check that every release now has to pass (v0.1.97, no re-lift); FIX for cars missing body panels since v0.1.92 (a change to the SPU translation; switched off), and the waiting threads sleep on every processor: about a fifth less CPU on big ones (v0.1.96, no re-lift); the SPU workers are woken one at a time instead of all together: 6% less CPU for the whole game, +4% frames a second where the CPU is the limit (v0.1.95, no re-lift); the native grid pass and pack pass of v0.1.93 did not run in the game (they stood aside while SPU interrupts were enabled, which is always); fixed and counted in a race, SPU workers about 3% less CPU (v0.1.94, no re-lift); native code for the busiest geometry functions (grid pass 4 times faster alone) and a cheaper SPU-to-runtime path: SPU workers 3.6% less CPU (v0.1.93, no re-lift); the SPU translator writes faster code (registers kept whole, the +0 rule off the float chains) and the reverb and the EQ's FFT are native: sound jobs 17% less time, same output (v0.1.92, one re-lift)

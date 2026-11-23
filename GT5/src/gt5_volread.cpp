@@ -1,25 +1,33 @@
-// Volume reader: finds the listed shader programs on a fresh PC before the game draws them, by reading the
-// game's model files with the game's OWN file code while the player is in the menus. Nothing of the
-// volume's format, key or index is known here: the game's code lists, opens, decrypts and unpacks; this
-// only asks it to, and hands the unpacked bytes to the shader scan (libs/video/rsx_shader_prep.inc), which
-// stores the programs it knows from the shipped list and builds them ahead.
+// Volume reader: finds the shader programs on a fresh PC before the game draws them, by reading the game's
+// model files with the game's OWN file code while the player is in the menus. Nothing of the volume's
+// format, key or index is known here: the game's code lists, opens, decrypts and unpacks; this only asks it
+// to, and hands the unpacked bytes to the shader side (libs/video/rsx_shader_prep.inc):
+//  - [found] every program of every shader container in them, by the containers' own structure, with no list
+//    (rsx_shader_prep_take_shds, libs/video/rsx_shader_found.inc): kept in <prep dir>\found.bin, made ahead
+//    on the build-ahead workers this session and by gt5.exe --prepare-shaders before every later start;
+//  - the listed programs (a shipped list), as before, when the lists name programs not known yet.
+// With the found store on (the default; LD_FOUND=0 off) every carrier file is read once per release and
+// reading rules: done-list <prep dir>\volume_found.txt, its head "found <rules> load <addr> toc <addr>".
+// Without it, the listed search alone: volume_read.txt as before, ending when every listed program is known.
 //
 // Where programs are (probe runs 1-2, 19 Nov, Europe 1.00): only in model containers ("MDL3" / "PACB" once
 // unpacked): /car/hq, /car/race, /car/interior, /wheel/hq, /wheel/race, /tire/hq, /tire/race, /character,
 // /crowd, and in /crs the course models <course>x and the skies <course>.sky / .envsky. Programs repeat a lot
 // between files (the second car: 1 new, 30 already known), so the directories are read in turns, one file
-// of each, the ones a player meets first first: cars (menus), courses, wheels, tyres, then the rest.
+// of each, the ones a player meets first first: car select's cars, wheels and tyres, then courses and skies,
+// then the rest (the menus' own programs are the executable's, read at start).
 // 18,813 files, 6.0 GB stored / 15.2 GB unpacked: ~5 min of reading at the idle rate (20 MB/s stored,
 // unpack 240 MB/s); it usually stops far earlier, when every listed program is known.
 //
-// Rules: on by default when the shader lists have programs not known yet (no list or nothing unknown:
-// nothing happens); GT5_VOLREAD=0 off. One guest thread of its own at the lowest priority. Between files it
+// Rules: on by default while a carrier file is not read yet (found store), or the shader lists have programs
+// not known yet; GT5_VOLREAD=0 off. One guest thread of its own at the lowest priority. Between files it
 // waits while the game itself uses its file layer (a request of its own in the last 500 ms, seen by wrapping
 // FileObject's request entry; its loads go first) and while a player drives (see
 // player_driving: not the menus' demo race, car select or pre-race). A file read
-// once (searched to the end) is written to <prep dir>\volume_read.txt and never read again for that shipped
-// list. Memory: one 30 MB and one 62 MB guest buffer from the runtime's heap while it runs, freed at the end.
-// Lines: "[shader-prep] volume: ..." when it starts, 20 s in, once a minute, and when it stops.
+// once (searched to the end) is written to the done-list and never read again for that release and rules
+// (found store) or shipped list. Memory: one 30 MB and one 62 MB guest buffer from the runtime's heap while
+// it runs, freed at the end. Lines: "[shader-prep] volume: ..." when it starts, 20 s in, once a minute, and
+// when it stops; after the last file, the files' coverage of the programs this PC has drawn ("files: ...").
 //
 // The game's functions are FOUND at start, not taken from fixed addresses: three of them by their code
 // (find_functions: branch targets, TOC offsets and address halves masked; exactly one match each), the
@@ -64,8 +72,14 @@ extern "C" unsigned long long cellPad_now_ms(void);
 // libs/video/rsx_shader_prep.inc
 extern "C" int rsx_shader_prep_scan_guest(uint32_t ea, uint32_t n, uint32_t* found, uint32_t* known,
                                           uint32_t* vertex);
-extern "C" uint32_t rsx_shader_prep_scan_listed(void);
 extern "C" uint32_t rsx_shader_prep_scan_unknown(uint64_t* list_hash, const char** dir);
+extern "C" int rsx_shader_prep_lists_ready(void);
+// libs/video/rsx_shader_found.inc
+extern "C" int rsx_shader_prep_take_shds(uint32_t ea, uint32_t n, uint32_t* containers, uint32_t* added,
+                                         uint32_t* vertex, uint32_t* skipped);
+extern "C" const char* rsx_shader_prep_found_dir(uint32_t* programs, uint32_t* rules);
+extern "C" void rsx_shader_prep_found_flush(void);
+extern "C" void rsx_shader_prep_found_coverage(void);
 
 struct gt5_func_entry {
     uint64_t addr;
@@ -119,10 +133,11 @@ const uint32_t kPatUnpackCaller[] = {
 // The carrier groups, in the order a player meets them; an ending of "" means every file of the directory.
 struct Group { const char* dir; const char* ending; };
 const Group kGroups[] = {
-    {"/car/hq", ""}, {"/crs", "x"}, {"/wheel/hq", ""}, {"/tire/hq", ""}, {"/crs", ".sky"}, {"/crs", ".envsky"},
+    {"/car/hq", ""}, {"/wheel/hq", ""}, {"/tire/hq", ""}, {"/crs", "x"}, {"/crs", ".sky"}, {"/crs", ".envsky"},
     {"/car/race", ""}, {"/wheel/race", ""}, {"/tire/race", ""}, {"/character", ""}, {"/crowd", ""},
     {"/car/interior", ""},
 };
+bool s_found_mode, s_list_mode;   // what this session reads for (see the top)
 
 const uint32_t kBufCap = 30u << 20, kUbufCap = 62u << 20;
 
@@ -352,6 +367,111 @@ uint64_t call(uint32_t code, uint64_t a0 = 0, uint64_t a1 = 0, uint64_t a2 = 0, 
 
 uint32_t s_path, s_obj, s_result, s_bufdesc, s_range, s_state, s_ent, s_ent_cap, s_buf, s_ubuf;
 
+// ---- reads that do not install ----------------------------------------------------------------------------------
+// GT5 copies a volume file to the hard disk the first time it opens it for reading ("Installing..." at the bottom
+// right; the PDIPFS folder of its game data): its volume device (FileDevicePFSGameData) opens a handle in slot 34
+// (Europe 1.00 0x00BC0918), which looks the file up and calls slot 46 (0x00BBC54C); slot 46 asks slot 60
+// (0x00BBC3DC: not under one of the device's excluded folders, not above its size limit, room left on the disk)
+// and on yes copies the whole file, counted in the "installing" count the indicator shows (0x00BB59F4), and
+// opens the copy; on no it reads the file from the volume, as it does for any file it does not install. Slot 34
+// is the only caller of slot 46, and slot 46 the only one that installs. So the reader's opens get "no": slot
+// 34's wrapper marks this thread while it serves one of the reader's own FileObjects (its stack: load's, or
+// s_obj), slot 60's wrapper answers "no" while marked and hands every other question to the game's own code.
+// The device's vtable is found by its type name, its slots checked by the calls between them (34 calls slot 46,
+// 46 calls slot 60); anything else: nothing is wrapped and the volume is not read.
+void (*s_open_fn)(ppu_context*);
+void (*s_install_fn)(ppu_context*);
+uint32_t s_open_opd, s_install_opd;
+uint32_t s_stack_lo, s_stack_hi;           // the reader's call stack (call()'s frames)
+volatile LONG s_reader_opens, s_installs_declined;
+thread_local int t_reader_open;
+
+bool reader_object(uint32_t obj)
+{
+    return obj && (obj == s_obj || (obj >= s_stack_lo && obj < s_stack_hi));
+}
+void open_wrap(ppu_context* ctx)
+{
+    const int before = t_reader_open;
+    const uint32_t h = (uint32_t)ctx->gpr[4];
+    t_reader_open = h >= 0x10000u && reader_object(rd32(h + 8));   // the handle's FileObject
+    if (t_reader_open) InterlockedIncrement(&s_reader_opens);
+    s_open_fn(ctx);
+    while (g_trampoline_fn) {
+        void (*tf)(void*) = g_trampoline_fn;
+        g_trampoline_fn = nullptr;
+        tf(ctx);
+    }
+    t_reader_open = before;
+}
+void install_wrap(ppu_context* ctx)
+{
+    if (t_reader_open) {   // one of the reader's files: read from the volume, not installed
+        InterlockedIncrement(&s_installs_declined);
+        ctx->gpr[3] = 0;
+        return;
+    }
+    s_install_fn(ctx);
+    while (g_trampoline_fn) {
+        void (*tf)(void*) = g_trampoline_fn;
+        g_trampoline_fn = nullptr;
+        tf(ctx);
+    }
+}
+// A virtual call through vtable offset off (lwz rX, off(rY); ... bctrl) in the first 2 KB of code.
+bool has_vcall(uint32_t code, uint32_t off)
+{
+    for (uint32_t i = 0; i < 0x200; i++) {
+        const uint32_t w = rd32(code + 4 * i), ra = (w >> 16) & 31;
+        if ((w >> 26) != 32 || (w & 0xFFFFu) != off || ra == 1 || ra == 2) continue;
+        for (uint32_t j = 1; j <= 8; j++)
+            if (rd32(code + 4 * (i + j)) == 0x4E800421u) return true;
+    }
+    return false;
+}
+bool find_install_hooks()
+{
+    static const char kName[] = "N6PDIPS321FileDevicePFSGameDataE";
+    const unsigned char* lo = vm_base + kImageLo;
+    const unsigned char* hi = vm_base + kImageHi;
+    auto slot = [](uint32_t v, uint32_t k) { return rd32(v + 4 + 4 * k); };
+    auto in_image = [](uint32_t a) { return a >= kImageLo && a < kImageHi && !(a & 3); };
+    for (const unsigned char* p = lo; p + sizeof kName <= hi; p++) {
+        p = (const unsigned char*)memchr(p, 'N', (size_t)(hi - p));
+        if (!p || p + sizeof kName > hi) break;
+        if (memcmp(p, kName, sizeof kName) != 0 || p[-1] != 0) continue;
+        const uint32_t name_ea = (uint32_t)(p - vm_base);
+        for (uint32_t h = find_word(name_ea, kImageLo); h; h = find_word(name_ea, h + 4)) {
+            const uint32_t ti = h - 4;
+            for (uint32_t v = find_word(ti, kImageLo); v; v = find_word(ti, v + 4)) {
+                if (rd32(v - 4) != 0) continue;   // the primary vtable: {0, type information, slots...}
+                const uint32_t o34 = slot(v, 34), o46 = slot(v, 46), o60 = slot(v, 60);
+                if (!in_image(o34) || !in_image(o46) || !in_image(o60)) continue;
+                const uint32_t c34 = rd32(o34), c46 = rd32(o46), c60 = rd32(o60);
+                if (!in_image(c34) || !in_image(c46) || !in_image(c60)) continue;
+                if (!has_vcall(c34, 46 * 4) || !has_vcall(c46, 60 * 4)) continue;
+                void (*f34)(ppu_context*) = lifted(c34);
+                void (*f60)(ppu_context*) = lifted(c60);
+                if (!f34 || !f60) continue;
+                s_open_opd = o34; s_open_fn = f34;
+                s_install_opd = o60; s_install_fn = f60;
+                fprintf(stderr, "[shader-prep] volume: reads without install: the volume device's open 0x%08X and install "
+                                "check 0x%08X (its slots 34 / 60, vtable 0x%08X) wrapped for the reader's own files\n",
+                        c34, c60, v + 4);
+                return true;
+            }
+        }
+    }
+    return false;
+}
+void wrap_install_hooks()
+{
+    ppu_register_function(s_open_opd, open_wrap);
+    ppu_register_function(s_install_opd, install_wrap);
+    wr32(s_open_opd, s_open_opd);         // the descriptors now lead to the wrappers
+    wr32(s_install_opd, s_install_opd);
+}
+
 void put_path(const std::string& p)
 {
     const size_t n = p.size() < 1000 ? p.size() : 1000;
@@ -433,14 +553,19 @@ bool game_reading()
 
 struct Stats {
     uint64_t files = 0, stored = 0, unpacked = 0, found = 0, found_v = 0, too_big = 0, failed = 0;
+    uint64_t containers = 0, added = 0, added_v = 0;   // [found] shader containers met, programs new to the store
+    uint64_t skipped = 0, files_skipped = 0;           // [found] containers not read, files with one
     double wait_load = 0, wait_drive = 0;
 } s_st;
 uint32_t s_gfound[sizeof kGroups / sizeof kGroups[0]];          // programs found per group
 std::string s_glast[sizeof kGroups / sizeof kGroups[0]];        // the group's file of its last find
 
-// One file: load as stored, unpack if packed, search. false: not read (too big / failed).
+// One file: load as stored, unpack if packed, search. false: not read (too big / failed). s_last_skipped: shader
+// containers in it this build could not read (then it is not written to the done-list: a later build reads it).
+uint32_t s_last_skipped;
 bool read_file(const std::string& path, const Ent& e)
 {
+    s_last_skipped = 0;
     if (e.stored > kBufCap || e.unpacked > kUbufCap) { s_st.too_big++; return true; }   // never fits: done
     put_path(path);
     memset(vm_base + s_result, 0, 0x80);
@@ -461,8 +586,32 @@ bool read_file(const std::string& path, const Ent& e)
         size = usize;
     }
     uint32_t found = 0, known = 0, vert = 0;
-    rsx_shader_prep_scan_guest(data, size, &found, &known, &vert);
+    if (s_list_mode) rsx_shader_prep_scan_guest(data, size, &found, &known, &vert);
     s_st.files++; s_st.stored += e.stored; s_st.unpacked += size; s_st.found += found; s_st.found_v += vert;
+    if (s_found_mode) {   // [found] every container in it, every program of them
+        uint32_t c = 0, a = 0, v = 0, sk = 0;
+        rsx_shader_prep_take_shds(data, size, &c, &a, &v, &sk);
+        s_last_skipped = sk;
+        s_st.containers += c; s_st.added += a; s_st.added_v += v; s_st.skipped += sk;
+        if (sk) s_st.files_skipped++;
+        // LD_FOUND_DUMP=<folder>: the first 6 files with a container not read, whole, unpacked (to work out why;
+        // the game's data: for this PC only)
+        static int dumped;
+        const char* dd = getenv("LD_FOUND_DUMP");
+        if (sk && dd && dd[0] && dumped < 6) {
+            std::string fn = std::string(dd) + "\\";
+            for (char ch : path) fn += (ch == '/' || ch == '\\' || ch == ':') ? '_' : ch;
+            fn += ".bin";
+            CreateDirectoryA(dd, nullptr);
+            if (FILE* f = fopen(fn.c_str(), "wb")) {
+                fwrite(vm_base + data, 1, size, f);
+                fclose(f);
+                dumped++;
+                fprintf(stderr, "[shader-prep] volume: dumped %s (%u bytes, %u containers not read) to %s\n", path.c_str(),
+                        size, sk, fn.c_str());
+            }
+        }
+    }
     return true;
 }
 
@@ -484,16 +633,30 @@ void reader_thread(ppu_context* ctx)
     s_self = ctx;
     s_reader_tid = ctx->thread_id;
     const double t0 = now_s();
-    // The lists first (shader-prep reads them a few seconds in); nothing to look for: nothing to do.
+    // The lists first (shader-prep reads them a few seconds in, also when there are none); then what to read
+    // for: every container (the found store), the listed programs not known yet, or nothing.
     uint64_t hash = 0;
     const char* dir = nullptr;
-    for (int i = 0; i < 2400 && !rsx_shader_prep_scan_listed(); i++) Sleep(250);
+    for (int i = 0; i < 2400 && !rsx_shader_prep_lists_ready(); i++) Sleep(250);
     const uint32_t unknown0 = rsx_shader_prep_scan_unknown(&hash, &dir);
-    if (!unknown0 || !dir) {
+    uint32_t known0 = 0, rules = 0;
+    const char* fdir = rsx_shader_prep_found_dir(&known0, &rules);
+    s_found_mode = fdir != nullptr;
+    s_list_mode = unknown0 && dir;
+    if (!s_found_mode && !s_list_mode) {
         fprintf(stderr, "[shader-prep] volume: %s: nothing to read\n",
-                rsx_shader_prep_scan_listed() ? "every listed program is known" : "no shader list");
+                rsx_shader_prep_lists_ready() ? "every listed program is known" : "no shader list");
         return;
     }
+    if (!dir) dir = fdir;
+    // Reads that do not install (see above), or no reading at all.
+    if (!find_install_hooks()) {
+        fprintf(stderr, "[shader-prep] volume: the game's install check was not found in this executable: the volume is "
+                        "not read (each file read would be copied to the hard disk)\n");
+        return;
+    }
+    s_stack_hi = (uint32_t)((s_self->gpr[1] - 0x2000) & ~0xFull);   // call()'s frames are below this
+    s_stack_lo = s_stack_hi - 0x40000u;
     s_path = galloc(1024); s_obj = galloc(0x200); s_result = galloc(0x80); s_bufdesc = galloc(16);
     s_range = galloc(16); s_state = galloc(0x2000); s_ent_cap = 4096; s_ent = galloc(s_ent_cap * 0x40);
     s_buf = galloc(kBufCap); s_ubuf = galloc(kUbufCap);
@@ -501,11 +664,14 @@ void reader_thread(ppu_context* ctx)
         fprintf(stderr, "[shader-prep] volume: no guest memory for the reader: not read this session\n");
         return;
     }
-    // The done-list: "list <hash>" then one path a line; another shipped list starts it over.
-    const std::string done_path = std::string(dir) + "\\volume_read.txt";
+    // The done-list: its head, then one path a line; another head starts it over. The found store's: "found
+    // <rules> load <addr> toc <addr>" (this release, these reading rules); the listed search's: "list <hash>"
+    // (another shipped list).
+    const std::string done_path = std::string(dir) + (s_found_mode ? "\\volume_found.txt" : "\\volume_read.txt");
     std::unordered_set<std::string> done;
-    char head[64];
-    snprintf(head, sizeof head, "list %016llX", (unsigned long long)hash);
+    char head[96];
+    if (s_found_mode) snprintf(head, sizeof head, "found %u load %08X toc %08X", rules, kLoad, kToc);
+    else snprintf(head, sizeof head, "list %016llX", (unsigned long long)hash);
     if (FILE* f = fopen(done_path.c_str(), "r")) {
         char line[1100];
         bool same = fgets(line, sizeof line, f) && strncmp(line, head, strlen(head)) == 0;
@@ -544,10 +710,23 @@ void reader_thread(ppu_context* ctx)
             todo[g].push_back({p, e});
         }
     }
-    fprintf(stderr, "[shader-prep] volume: reading the game's model files for %u listed programs not seen yet: %zu "
-                    "files (%.0f MB) in %zu groups, %zu read in earlier sessions\n",
-            unknown0, n_files, n_bytes / 1048576.0, todo.size(), n_before);
-    // In turns, one file of each group; stop when nothing listed is unknown any more.
+    if (s_found_mode)
+        fprintf(stderr, "[shader-prep] volume: reading the game's model files for every shader program (%u known so "
+                        "far)%s: %zu files (%.0f MB) in %zu groups, %zu read in earlier sessions\n", known0,
+                s_list_mode ? " and the listed ones not seen yet" : "", n_files, n_bytes / 1048576.0, todo.size(),
+                n_before);
+    else
+        fprintf(stderr, "[shader-prep] volume: reading the game's model files for %u listed programs not seen yet: %zu "
+                        "files (%.0f MB) in %zu groups, %zu read in earlier sessions\n",
+                unknown0, n_files, n_bytes / 1048576.0, todo.size(), n_before);
+    if (!n_files) {
+        if (dl) fclose(dl);
+        gfree(s_buf); gfree(s_ubuf); gfree(s_ent); gfree(s_state);
+        return;
+    }
+    wrap_install_hooks();   // from here the reader's own opens do not install
+    // In turns, one file of each group; the found store reads every one, the listed search alone stops when
+    // nothing listed is unknown any more.
     size_t left = n_files, idx = 0;
     double last_line = 0, last_check = 0;
     bool said20 = false;
@@ -559,12 +738,16 @@ void reader_thread(ppu_context* ctx)
         if (!force && !(!said20 && t - t0 >= 20.0) && !(last_line && t - last_line >= 60.0)) return;
         said20 = true;
         last_line = t;
-        fprintf(stderr, "[shader-prep] volume t=%.0f s: %llu files read (%.0f MB, %.0f MB unpacked), %llu programs "
-                        "found (%llu vertex), %u listed still unknown, %zu files left; waited %.0f s for the "
-                        "game's loads, %.0f s while a player drove\n",
+        fprintf(stderr, "[shader-prep] volume t=%.0f s: %llu files read (%.0f MB, %.0f MB unpacked), %llu shader "
+                        "containers, %llu programs new to the store (%llu vertex), %llu listed programs found (%llu "
+                        "vertex), %u listed still unknown, %zu files left; waited %.0f s for the game's loads, %.0f s "
+                        "while a player drove; %llu containers not read (in %llu files); reads without install: %ld "
+                        "opens of the reader's, %ld installs declined\n",
                 t - t0, (unsigned long long)s_st.files, s_st.stored / 1048576.0, s_st.unpacked / 1048576.0,
+                (unsigned long long)s_st.containers, (unsigned long long)s_st.added, (unsigned long long)s_st.added_v,
                 (unsigned long long)s_st.found, (unsigned long long)s_st.found_v, unknown, left, s_st.wait_load,
-                s_st.wait_drive);
+                s_st.wait_drive, (unsigned long long)s_st.skipped, (unsigned long long)s_st.files_skipped,
+                (long)s_reader_opens, (long)s_installs_declined);
         // Per group: files read / programs found, and the file of the last find (which groups the last
         // programs come from, to order the groups better).
         std::string g;
@@ -594,22 +777,38 @@ void reader_thread(ppu_context* ctx)
         }
         const auto& item = todo[g][pos[g]++];
         left--;
-        const uint64_t found_before = s_st.found;
-        if (read_file(item.first, item.second) && dl) { fprintf(dl, "%s\n", item.first.c_str()); fflush(dl); }
-        if (s_st.found > found_before) {
-            s_gfound[g] += (uint32_t)(s_st.found - found_before);
+        const uint64_t found_before = s_st.found + s_st.added;
+        if (read_file(item.first, item.second) && dl && !s_last_skipped) {
+            fprintf(dl, "%s\n", item.first.c_str());
+            fflush(dl);
+        }
+        if (s_st.found + s_st.added > found_before) {
+            s_gfound[g] += (uint32_t)(s_st.found + s_st.added - found_before);
             s_glast[g] = item.first.substr(item.first.rfind('/') + 1);
         }
-        unknown = rsx_shader_prep_scan_unknown(nullptr, nullptr);
-        progress(unknown, !unknown);
-        if (!unknown) { why = "every listed program is known"; break; }
+        if (s_list_mode) unknown = rsx_shader_prep_scan_unknown(nullptr, nullptr);
+        progress(unknown, !left || (s_list_mode && !unknown && !s_found_mode));
+        if (s_list_mode && !unknown && !s_found_mode) { why = "every listed program is known"; break; }
+        // Containers met and none of them readable by this build: stop (a later build reads these files again).
+        if (s_found_mode && !s_st.containers && s_st.files_skipped >= 40) {
+            why = "the shader containers in these files are not in a form this build reads";
+            progress(unknown, true);
+            break;
+        }
     }
     if (dl) fclose(dl);
     gfree(s_buf); gfree(s_ubuf); gfree(s_ent); gfree(s_state);
-    fprintf(stderr, "[shader-prep] volume: done (%s) after %.0f s: %llu files, %.0f MB read, %llu programs found, "
-                    "%llu too big, %llu not read\n", why, now_s() - t0, (unsigned long long)s_st.files,
-            s_st.stored / 1048576.0, (unsigned long long)s_st.found, (unsigned long long)s_st.too_big,
-            (unsigned long long)s_st.failed);
+    fprintf(stderr, "[shader-prep] volume: done (%s) after %.0f s: %llu files, %.0f MB read, %llu shader containers, "
+                    "%llu programs new to the store (%llu vertex), %llu listed programs found, %llu too big, %llu not "
+                    "read, %llu containers not read; reads without install: %ld opens of the reader's, %ld installs "
+                    "declined\n", why, now_s() - t0, (unsigned long long)s_st.files, s_st.stored / 1048576.0,
+            (unsigned long long)s_st.containers, (unsigned long long)s_st.added, (unsigned long long)s_st.added_v,
+            (unsigned long long)s_st.found, (unsigned long long)s_st.too_big, (unsigned long long)s_st.failed,
+            (unsigned long long)s_st.skipped, (long)s_reader_opens, (long)s_installs_declined);
+    if (s_found_mode) {   // [found] everything to found.bin now, and what the files gave against what this PC drew
+        rsx_shader_prep_found_flush();
+        rsx_shader_prep_found_coverage();
+    }
 }
 
 DWORD WINAPI starter(LPVOID)
@@ -618,8 +817,8 @@ DWORD WINAPI starter(LPVOID)
     if (!find_functions()) return 0;
     // Started once the shader lists are read (the runtime and the game are up by then); the reader itself
     // waits for the volume (its listing answers once the game has mounted it and read its index).
-    for (int i = 0; i < 2400 && !rsx_shader_prep_scan_listed(); i++) Sleep(250);
-    if (!rsx_shader_prep_scan_listed()) return 0;
+    for (int i = 0; i < 2400 && !rsx_shader_prep_lists_ready(); i++) Sleep(250);
+    if (!rsx_shader_prep_lists_ready()) return 0;
     const uint32_t opd = galloc(16), name = galloc(16), tid = galloc(8);
     if (!opd || !name || !tid) return 0;
     wr32(opd, opd);   // the descriptor's own address stands in for the function (registered below)

@@ -97,6 +97,13 @@ file(GLOB SPU_JOB_SOURCES CONFIGURE_DEPENDS "${SPU_DIR}/jobs/*/spu_recomp.c")
 if(SPU_JOB_SOURCES)
     list(APPEND SPU_SOURCES ${SPU_JOB_SOURCES} "${GT5_DIR}/src/gen/spu_jobs.c")
 endif()
+# Each image's any-address form (spu_lifter.py --any-address, since test build 26): every instruction
+# address enterable, so the runtime never interprets an address of a known image. spu_jobs.c names
+# them, so without these the link fails (GitHub #20, 23 Nov 2026). Compiled as the image's own file is.
+file(GLOB SPU_ANY_SOURCES CONFIGURE_DEPENDS "${SPU_DIR}/jobs/*/spu_anyaddr.c")
+if(SPU_ANY_SOURCES)
+    list(APPEND SPU_SOURCES ${SPU_ANY_SOURCES})
+endif()
 
 add_executable(gt5
     "${GT5_DIR}/src/gt5_longjmp.cpp"
@@ -145,19 +152,23 @@ endif()
 # GT5's sound job: its numbers are samples, and it needs every bit of speed to keep up. jD58063CD is
 # the disc's; game update 2.17 replaces it with jCB9BD024 (spu_jobs_from_eboot.py, UPDATED).
 foreach(_sound_job jD58063CD jCB9BD024)
-    if(EXISTS "${SPU_DIR}/jobs/${_sound_job}/spu_recomp.c")
-        set_source_files_properties("${SPU_DIR}/jobs/${_sound_job}/spu_recomp.c" PROPERTIES
-            COMPILE_OPTIONS "-O2;-w;-mavx2;-mfma;-ffp-contract=off;-DSPU_X86_RZ_ALWAYS=1;-DSPU_X86_FAST_FLOAT=1")
-    endif()
+    foreach(_f spu_recomp.c spu_anyaddr.c)
+        if(EXISTS "${SPU_DIR}/jobs/${_sound_job}/${_f}")
+            set_source_files_properties("${SPU_DIR}/jobs/${_sound_job}/${_f}" PROPERTIES
+                COMPILE_OPTIONS "-O2;-w;-mavx2;-mfma;-ffp-contract=off;-DSPU_X86_RZ_ALWAYS=1;-DSPU_X86_FAST_FLOAT=1")
+        endif()
+    endforeach()
 endforeach()
 # The EQ module (socepdideq: jEB79FDFC, jE3FDDA10 from 2.01) does its FFT's phase steps in double
 # precision, and switching the rounding mode around each double op costs ten times the op: its doubles
 # round toward zero instead (SPU_X86_FAST_DOUBLE, spu_helpers.h), as in the Windows build.
 foreach(_eq_job jEB79FDFC jE3FDDA10)
-    if(EXISTS "${SPU_DIR}/jobs/${_eq_job}/spu_recomp.c")
-        set_source_files_properties("${SPU_DIR}/jobs/${_eq_job}/spu_recomp.c" PROPERTIES
-            COMPILE_OPTIONS "-O2;-w;-mavx2;-mfma;-ffp-contract=off;-DSPU_X86_RZ_ALWAYS=1;-DSPU_X86_FAST_DOUBLE=1")
-    endif()
+    foreach(_f spu_recomp.c spu_anyaddr.c)
+        if(EXISTS "${SPU_DIR}/jobs/${_eq_job}/${_f}")
+            set_source_files_properties("${SPU_DIR}/jobs/${_eq_job}/${_f}" PROPERTIES
+                COMPILE_OPTIONS "-O2;-w;-mavx2;-mfma;-ffp-contract=off;-DSPU_X86_RZ_ALWAYS=1;-DSPU_X86_FAST_DOUBLE=1")
+        endif()
+    endforeach()
 endforeach()
 
 target_link_libraries(gt5 PRIVATE ps3recomp_runtime SDL2::SDL2 ${CMAKE_DL_LIBS} m pthread)

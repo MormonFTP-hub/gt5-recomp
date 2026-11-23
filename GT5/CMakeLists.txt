@@ -80,6 +80,12 @@ if(SPU_JOB_SOURCES)
     message(STATUS "Lifted SPU jobs: ${SPU_JOB_COUNT} image(s)")
     list(APPEND SPU_SOURCES ${SPU_JOB_SOURCES} "${CMAKE_CURRENT_SOURCE_DIR}/src/gen/spu_jobs.c")
 endif()
+# Each image's any-address form (spu_lifter.py --any-address, n_static 22 Nov 2026): every instruction address
+# enterable, so the runtime never interprets an address of a known image. Compiled as the image's own file is.
+file(GLOB SPU_ANY_SOURCES CONFIGURE_DEPENDS "${SPU_DIR}/jobs/*/spu_anyaddr.c")
+if(SPU_ANY_SOURCES)
+    list(APPEND SPU_SOURCES ${SPU_ANY_SOURCES})
+endif()
 
 add_executable(gt5
     src/gt5_longjmp.cpp
@@ -165,14 +171,14 @@ endif()
 # Only the mixer: the downmix module (jFDFFAAC1) filled the mix with NaN under these rules (15 Nov),
 # since the SPU reads exponent-255 words as large numbers where the host sees infinity or NaN.
 foreach(_sound_job jD58063CD jCB9BD024)
-    set_source_files_properties("${SPU_DIR}/jobs/${_sound_job}/spu_recomp.c" PROPERTIES
+    set_source_files_properties("${SPU_DIR}/jobs/${_sound_job}/spu_recomp.c" "${SPU_DIR}/jobs/${_sound_job}/spu_anyaddr.c" PROPERTIES
         COMPILE_OPTIONS "-O2;/w;/GS-;-mavx2;-mfma;-ffp-contract=off;-DSPU_X86_RZ_ALWAYS=1;-DSPU_X86_FAST_FLOAT=1")
 endforeach()
 # The EQ module (socepdideq: jEB79FDFC on the disc, jE3FDDA10 from 2.01) does its FFT's phase steps in
 # double precision, three ops per pass, and switching the rounding mode around each one costs ten
 # times the op: its doubles round toward zero instead (SPU_X86_FAST_DOUBLE, spu_helpers.h).
 foreach(_eq_job jEB79FDFC jE3FDDA10)
-    set_source_files_properties("${SPU_DIR}/jobs/${_eq_job}/spu_recomp.c" PROPERTIES
+    set_source_files_properties("${SPU_DIR}/jobs/${_eq_job}/spu_recomp.c" "${SPU_DIR}/jobs/${_eq_job}/spu_anyaddr.c" PROPERTIES
         COMPILE_OPTIONS "-O2;/w;/GS-;-mavx2;-mfma;-ffp-contract=off;-DSPU_X86_RZ_ALWAYS=1;-DSPU_X86_FAST_DOUBLE=1")
 endforeach()
 
@@ -409,7 +415,57 @@ target_compile_definitions(gt5 PRIVATE _CRT_SECURE_NO_WARNINGS)
 # No FMA contraction, so floating-point results match the -O1 build. -mfma lets ppu_vmx.h do
 # vmaddfp/vnmsubfp four lanes at once with the same results (every AVX2 CPU has FMA; contraction
 # stays off, so nothing else changes).
-set_source_files_properties(${RECOMP_SOURCES} PROPERTIES COMPILE_OPTIONS "/w;/bigobj;-O2;-mavx2;-mfma;-mbmi;-mbmi2;-mmovbe;-mlzcnt;-mpopcnt;-ffp-contract=off")
+set(GT5_RECOMP_OPTIONS "/w;/bigobj;-O2;-mavx2;-mfma;-mbmi;-mbmi2;-mmovbe;-mlzcnt;-mpopcnt;-ffp-contract=off")
+set_source_files_properties(${RECOMP_SOURCES} PROPERTIES COMPILE_OPTIONS "${GT5_RECOMP_OPTIONS}")
+
+# Native PPU functions (src/native/ppu_natives.txt, scripts/ppu_native_patch.py, src/native/gen_ppu_leaf.py): a
+# lifted file that holds a listed function is compiled from a copy in which that function is renamed
+# func_<ADDR>_lifted and a switch with the old name picks the native form or the lifted one at run time
+# (GT5_PPU_NATIVE: 1 native, the default; 0 lifted, as before; 2 compare both, differences logged). The native
+# form is made at build time from this lift's own text of the function, and only where that text is the one it
+# was proven on (its SHA-1 in the list): every other function, and another release or update of the game, keeps
+# its lifted code. No re-lift; every caller and the function table keep the old name. -DGT5_PPU_NATIVE=OFF: none
+# of it is built.
+option(GT5_PPU_NATIVE "native PPU functions (src/native/ppu_natives.txt)" ON)
+set(_ppu_nat_list "${GT5_NATIVE_DIR}/ppu_natives.txt")
+if(GT5_PPU_NATIVE AND EXISTS "${_ppu_nat_list}")
+    find_program(GT5_PYTHON NAMES python python3
+                 HINTS "${CMAKE_CURRENT_SOURCE_DIR}/../venv/Scripts" "${CMAKE_CURRENT_SOURCE_DIR}/../venv/bin")
+    set(_ppu_nat_files "")
+    if(GT5_PYTHON)
+        set(_ppu_nat_script "${CMAKE_CURRENT_SOURCE_DIR}/scripts/ppu_native_patch.py")
+        set(_ppu_nat_gen "${GT5_NATIVE_DIR}/gen_ppu_leaf.py")
+        # The lifted files holding a listed function with the proven text; a re-lift rewrites ppu_recomp.h, so
+        # configuring again then looks again.
+        set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+            "${_ppu_nat_list}" "${RECOMP_DIR}/ppu_recomp.h" "${_ppu_nat_script}" "${_ppu_nat_gen}")
+        execute_process(COMMAND "${GT5_PYTHON}" "${_ppu_nat_script}" --where "${_ppu_nat_list}" "${RECOMP_DIR}"
+                        OUTPUT_VARIABLE _ppu_nat_files RESULT_VARIABLE _ppu_nat_rc OUTPUT_STRIP_TRAILING_WHITESPACE)
+        if(NOT _ppu_nat_rc EQUAL 0)
+            set(_ppu_nat_files "")
+        endif()
+    endif()
+    foreach(_f ${_ppu_nat_files})
+        set(_in "${RECOMP_DIR}/${_f}")
+        set(_out "${CMAKE_BINARY_DIR}/ppu_native/${_f}")
+        add_custom_command(OUTPUT "${_out}"
+            COMMAND "${GT5_PYTHON}" "${_ppu_nat_script}" "${_in}" "${_out}" "${_ppu_nat_list}"
+            DEPENDS "${_in}" "${_ppu_nat_list}" "${_ppu_nat_script}" "${_ppu_nat_gen}"
+            COMMENT "Native PPU functions in ${_f}" VERBATIM)
+        set_source_files_properties("${_in}" PROPERTIES HEADER_FILE_ONLY ON)
+        target_sources(gt5 PRIVATE "${_out}")
+        set_source_files_properties("${_out}" PROPERTIES
+            INCLUDE_DIRECTORIES "${GT5_NATIVE_DIR}" COMPILE_OPTIONS "${GT5_RECOMP_OPTIONS}")
+    endforeach()
+    if(_ppu_nat_files)
+        file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/ppu_native")
+        target_sources(gt5 PRIVATE "${GT5_NATIVE_DIR}/ppu_native.cpp")
+        list(LENGTH _ppu_nat_files _ppu_nat_n)
+        message(STATUS "Native PPU:      functions in ${_ppu_nat_n} lifted file(s) (GT5_PPU_NATIVE=0 at run time: as before)")
+    else()
+        message(STATUS "Native PPU:      none for this copy of the game")
+    endif()
+endif()
 
 # Keep symbols so crash RVAs can be symbolized.
 target_compile_options(gt5 PRIVATE /Z7)

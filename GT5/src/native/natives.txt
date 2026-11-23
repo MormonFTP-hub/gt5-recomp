@@ -25,24 +25,23 @@ jEB79FDFC 000043C0 - native_jEB79FDFC.c hooked
 # The geometry jobs: w01606C00 0x8038 (the grid pass, whole function), its fill loop 0x5BA8 and the pack
 # pass 0x7DC8; w0163C080 0x66A8 and 0x6418. GT5_NATIVE_GEO=0/1/2. 0x8038 runs the statements its fast path leaves out as the
 # lifted code itself, cut from this copy's own lift at build time (generate).
-w01606C00 lift-sha1 7c707417c7e29d223a60ba863d49d508e2f6867d
+w01606C00 lift-sha1 a2e29c5b3a6c97cc09fd0d7ea66e1a119a8ec69d
 w01606C00 generate gen_w01606C00_blocks.py
 w01606C00 generate gen_w01606C00_7DC8.py
 w01606C00 00008038 - native_w01606C00.c hooked
 w01606C00 00005BA8 - native_w01606C00.c hooked
 w01606C00 00007DC8 - native_w01606C00.c hooked
-w0163C080 lift-sha1 4eec7fd483e7685e00714acca8dc425a8169c3fc
+w0163C080 lift-sha1 0ffc23aa043b42b510760242dc05ae4d8030db49
 w0163C080 000066A8 - native_w0163C080.c hooked
 w0163C080 00006418 - native_w0163C080.c hooked
 # The per-batch geometry job w018CAD00 (workload GPUSyncArray): its triangle cull 0xAB00, its other cull routine 0xF6C0 (counted
-# only), the command writer 0x1036C and its draw emitter 0x1011C (hand the batch's facing rule to the renderer). GT5_CULL=0 (default) the PS3's cull,
+# here, run by native_cad00.c below), the command writer 0x1036C and its draw emitter 0x1011C (hand the batch's facing rule to the renderer). GT5_CULL=0 (default) the PS3's cull,
 # 1 the graphics card culls, 2 compare (counts, changes nothing). No lift-sha1 line: these read only SPU-visible state, check the
 # image's own instruction words, and call the lifted functions by name, so any lift of this image will do.
 w018CAD00 0000AB00 - native_w018CAD00.c hooked
 # 0xAB00's triangle loop (from 0xAF88: decisions in AVX2, the loop's stores as it makes them, then on to 0xB4E0 as
 # the lift goes). GT5_CULLX=0 the lifted loop, 1 native (default), 2 both run and compared.
 w018CAD00 0000AF88 - native_w018CAD00.c hooked
-w018CAD00 0000F6C0 - native_w018CAD00.c hooked
 w018CAD00 0001036C - native_w018CAD00.c hooked
 w018CAD00 0001011C - native_w018CAD00.c hooked
 # The job's output allocator 0x4650, its ring / relocation step 0x4330, the shared-buffer atomic 0x41E8 and the DMA
@@ -53,6 +52,12 @@ w018CAD00 00004330 - native_w018CAD00.c hooked
 w018CAD00 000041E8 - native_w018CAD00.c hooked
 w018CAD00 000040A0 - native_w018CAD00.c hooked
 w018CAD00 00004650 - native_w018CAD00.c hooked
+# 0xF6C0, the batch cull for mirror records, as one native call (native_cad00.c): its statements cut from this copy's
+# own lift (generate: gen_cad00_f6c0.py), its vertex transform, bounding box and vertex-in-record loops in AVX2, the
+# PS3's result exactly. GT5_CAD00_NATIVE=0 the lifted routine, 1 native (default), 2 both run and compared;
+# "[cad00] ..." every 5 s. The counters and cull tags of native_w018CAD00.c still run first.
+w018CAD00 generate gen_cad00_f6c0.py
+w018CAD00 0000F6C0 - native_cad00.c hooked
 # The job's quadword copy 0x8F40 (its first pass is entered part way through with a computed branch the lift has
 # no function for: an interpreter run in the game each call). GT5_MEMCPY=0 runs the lifted code.
 w018CAD00 00008F40 - native_w018CAD00.c hooked
@@ -66,3 +71,39 @@ w018CAD00 00008E80 - native_w018CAD00.c hooked
 jD58063CD lift-sha1 f0ac19ba3adbcde465340abe99842c50a2d626d5
 jFE031AF6 lift-sha1 c014e1140fe057d2f348db0367c20101df5007b9
 jEB79FDFC lift-sha1 cd58e0fe94573792191b805ba1149e810d959531
+# The model drawing job w01695680 as generated native code (wgen_gen.py writes it at build time from this copy's own
+# game files; native_wgen.h: GT5_WGEN_W01695680 / GT5_WGEN = 0 lifted, 1 native (default), 2 compared). OFF since
+# n_static's re-lift: the lift no longer falls to the interpreter in this job, and it is now faster than the native
+# code (n_mdl round 4: 578 -> 643 us a job on 24 real captures, all reproduced). To turn it on, take the '#' off.
+#w01695680 generate wgen_gen.py
+#w01695680 00004030 - wgen_w01695680.c hooked
+# The same generator reproduces every capture of w01603480, w01642000, w018C3A80 too, but with n_static's lift it is
+# not faster there (n_mdl notes). Each is a `generate` line, a hooked line and a wgen_<image>.c (a copy of
+# wgen_w01695680.c with the name changed) away.
+# The geometry jobs w0163C080 and w01606C00 as generated native code: faster than their lift with the hand-written
+# natives above (n_mdl round 4: -35 % and -6 % a job on 24 real captures each), which they call where those hook.
+# GT5_WGEN_W0163C080 / GT5_WGEN_W01606C00 / GT5_WGEN = 0 lifted (the natives above still on), 1 native, 2 compared.
+# The entry is written "4030", not "00004030": lift_spu_jobs.py reads 8-digit addresses of a lift-sha1 image as its
+# --frozen-funcs, and 0x4030 there would change these two lifts (checked: both SHA-1s change) and so turn their
+# hand-written natives off; spu_native_patch.py reads either form.
+w0163C080 generate wgen_gen.py
+w0163C080 4030 - wgen_w0163C080.c hooked
+w01606C00 generate wgen_gen.py
+w01606C00 4030 - wgen_w01606C00.c hooked
+# The per-batch geometry job w018CAD00 as generated native code too (wgen_gen.py); it hands over to the
+# hand-written natives above where they hook. GT5_WGEN_W018CAD00 / GT5_WGEN = 0 lifted, 1 native, 2 compared.
+w018CAD00 generate wgen_gen.py
+w018CAD00 000107D8 - wgen_w018CAD00.c hooked
+# The sound jobs and the WWS job manager as generated native code (wgen_gen.py, from this copy's own job image files
+# in analysis/spu_miss): generated and checked on 24 real captures each (n_mdl round 4: every one reproduced), but NOT
+# faster than their lift with the hand-written natives above, so they stay lifted. The manager is checked only on
+# empty polls: it needs manager runs that start jobs first (n_mdl notes: one capture race). To turn one on, take the
+# '#' off its two lines (the sound jobs' lift-sha1 lines above hold for these too).
+#jD58063CD generate wgen_gen.py
+#jD58063CD 00000000 - wgen_jD58063CD.c hooked
+#jFE031AF6 generate wgen_gen.py
+#jFE031AF6 00000000 - wgen_jFE031AF6.c hooked
+#jEB79FDFC generate wgen_gen.py
+#jEB79FDFC 00000000 - wgen_jEB79FDFC.c hooked
+#j75BFE68A generate wgen_gen.py
+#j75BFE68A 00000A00 - wgen_j75BFE68A.c hooked

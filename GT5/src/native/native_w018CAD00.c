@@ -41,8 +41,8 @@
  *      reports the game's cull state against the SPU's facing rule (it changes nothing).
  * Modes 1 and 2 print "[cull] ..." every 5 s. PS3_AB_PERIOD=10 PS3_AB_WHAT=cull alternates the mode with 0.
  * The draw is tagged at 0x1011C (the writer's draw emitter), when the index address is final; 0xF6C0
- * (the job's other cull routine, for batches with a record list at ctx+0x244) stays lifted, its draws
- * tagged report-only. GT5_CULL_DUMP=<folder> (modes 1, 2) writes real inputs of both routines.
+ * (the job's other cull routine, for batches with a record list at ctx+0x244) is not decided here, its draws
+ * tagged report-only; it runs as native code from native_cad00.c (GT5_CAD00_NATIVE), the PS3's result exactly. GT5_CULL_DUMP=<folder> (modes 1, 2) writes real inputs of both routines.
  *
  * The job's output allocator (0x4650, 0x4330, 0x41E8, 0x40A0) runs as native code: GT5_ALLOC, see its
  * section below; so does its quadword copy 0x8F40 (GT5_MEMCPY). The build makes the lift take this image's
@@ -826,7 +826,7 @@ JD_HOOK(00008E80, 2, 33)
  * wait on has a parked list or is not done, the RSX is not clear of the ring space (the lifted code
  * waits for it), the shared line's page is not known committed. Inside 0x4650 a busy ring runs the
  * lifted 0x4330 and carries on.
- * GT5_ALLOC (read once): 0 the lifted functions (the default since D69); 1 native; 2 native, every result checked
+ * GT5_ALLOC (read once): 0 the lifted functions (the default); 1 native; 2 native, every result checked
  * (inside the buffer, aligned, after the one before; ring space inside the ring, at the put pointer or
  * at the ring's start after a wrap, the label clear of it; the shared put grown by the size):
  * "[cull-alloc] CHECK ..." for the first 8 that fail; 3 the lifted functions with the ring-space checks of 2 on
@@ -879,7 +879,7 @@ static inline void na_ll_settle(spu_context* ctx)
 enum {
     NA_CALLS, NA_FAST, NA_SWITCH, NA_RELOC, NA_CURSOR, NA_RING, NA_SHARED, NA_FLUSH, NA_PUTS, NA_PUTBYTES, NA_NOPUT,
     NA_GETS, NA_POLLS, NA_SHFULL, NA_SHRETRY, NA_WRAPS, NA_L_JM, NA_L_GUARD, NA_L_TAG, NA_L_BUSY, NA_L_PAGE, NA_NESTED,
-    NA_BAD, NA_T_ALLOC, NA_T_RELOC, NA_T_FLUSH, NA_T_SHARED, NA_T_LIFTED, NA_RINGMOVED, NA_N
+    NA_BAD, NA_T_ALLOC, NA_T_RELOC, NA_T_FLUSH, NA_T_SHARED, NA_T_LIFTED, NA_RINGMOVED, NA_RINGRESET, NA_N
 };
 static unsigned long long g_na[NA_N];
 static SPU_THREAD_LOCAL unsigned long long t_na[NA_N];
@@ -894,7 +894,9 @@ static __attribute__((noinline)) int na_init(void)
 {
     static volatile long said;
     const char* e = getenv("GT5_ALLOC");
-    int m = 0;   /* off until the ring-space check (GT5_ALLOC=2: 681 "overlaps the last" in one race, D69) is explained */
+    int m = 0;   /* off: the ring-space check's trips are explained (rings restarted at their base, see na_ring_check), but on
+                  * the job captures (n_cad00, 22 Nov) the native leaves 32 dead registers unlike the lifted code and is no
+                  * faster: direct branches already took the dispatcher out of the lifted functions' bid / bie */
     if (e && e[0] >= '0' && e[0] <= '3' && e[1] == 0) m = e[0] - '0';
     const char* ls = getenv("SPU_LOCKSTEP");
     if (m && ls && *ls && *ls != '0') m = 0;
@@ -947,13 +949,13 @@ static void na_report(void)
 #define NA_PER(t, n) ((n) ? (double)v[t] * ns / (double)(n) : 0.0)
     fprintf(stderr, "[cull-alloc] 0x4650 %llu (fast %llu, switch %llu) %.0f ns | lifted: job manager %llu, guard %llu, tag %llu, ring busy %llu, page %llu, %.0f ns |"
                     " 0x4330 %llu (cursor %llu, ring %llu, shared %llu, wraps %llu) %.0f ns, label reads %llu, tag polls %llu, busy ring in 0x4650 %llu |"
-                    " 0x40A0 %llu %.0f ns, PUTs %llu (%.0f bytes), none %llu | shared full %llu, retries %llu, %.0f ns | ring put moved between allocations %llu | checks failed %llu\n",
+                    " 0x40A0 %llu %.0f ns, PUTs %llu (%.0f bytes), none %llu | shared full %llu, retries %llu, %.0f ns | ring put moved between allocations %llu, ring restarted at its base %llu | checks failed %llu\n",
             v[NA_CALLS], v[NA_FAST], v[NA_SWITCH], NA_PER(NA_T_ALLOC, v[NA_FAST] + v[NA_SWITCH]),
             v[NA_L_JM], v[NA_L_GUARD], v[NA_L_TAG], v[NA_L_BUSY], v[NA_L_PAGE],
             NA_PER(NA_T_LIFTED, v[NA_L_JM] + v[NA_L_GUARD] + v[NA_L_TAG] + v[NA_L_BUSY] + v[NA_L_PAGE]),
             v[NA_RELOC], v[NA_CURSOR], v[NA_RING], v[NA_SHARED], v[NA_WRAPS], NA_PER(NA_T_RELOC, v[NA_RELOC]), v[NA_GETS], v[NA_POLLS], v[NA_NESTED],
             v[NA_FLUSH], NA_PER(NA_T_FLUSH, v[NA_FLUSH]), v[NA_PUTS], v[NA_PUTS] ? (double)v[NA_PUTBYTES] / (double)v[NA_PUTS] : 0.0, v[NA_NOPUT],
-            v[NA_SHFULL], v[NA_SHRETRY], NA_PER(NA_T_SHARED, v[NA_SHARED]), v[NA_RINGMOVED], v[NA_BAD]);
+            v[NA_SHFULL], v[NA_SHRETRY], NA_PER(NA_T_SHARED, v[NA_SHARED]), v[NA_RINGMOVED], v[NA_RINGRESET], v[NA_BAD]);
 #undef NA_PER
     fflush(stderr);
 #endif
@@ -1016,31 +1018,29 @@ static inline u128 na_ai(u128 v, uint32_t k) { for (int i = 0; i < 4; i++) v._u3
 static inline u128 na_u(uint32_t w0) { u128 r; r._u32[0] = w0; r._u32[1] = r._u32[2] = r._u32[3] = 0; return r; }
 static inline uint32_t na_shl1(uint32_t n) { n &= 63u; return n < 32u ? 1u << n : 0u; }   /* shl of 1 by n (SPU: counts 32..63 give 0) */
 
-/* ---- the channels, through the runtime as the lifted code does ---- */
+/* ---- the channels, through the runtime as the lifted code does ----
+ * Every DMA and every tag poll of these functions sits between `bid` and `bie` in the SPU code (0x4124 /
+ * 0x414C, 0x416C / 0x419C, 0x44B4 / 0x44CC, 0x454C / 0x456C, 0x4574 / 0x458C, 0x4784 / 0x479C): the channel
+ * operations run with interrupts off and leave them on, here too (n_cad00, 22 Nov: the job captures hold the
+ * interrupt state of every channel operation, and the native made them with interrupts on). A poll that finds
+ * the tags not done polls again, as the SPU loops do; no channel operation the lifted code would not make. */
 static inline void na_wrch(spu_context* ctx, uint32_t ch, uint32_t v) { spu_wrch(ctx, ch, na_u(v)); }
-static inline int na_poll(spu_context* ctx, uint32_t mask)          /* wrch TagMask, wrch TagUpdate 0, rdch TagStat == mask */
+static inline int na_poll(spu_context* ctx, uint32_t mask)          /* bid; wrch TagMask, wrch TagUpdate 0, rdch TagStat == mask; bie */
 {
+    ctx->int_enable = 0;
     na_wrch(ctx, MFC_WrTagMask, mask);
     na_wrch(ctx, MFC_WrTagUpdate, 0);
     NA_ADD(NA_POLLS, 1);
-    return spu_rdch(ctx, MFC_RdTagStat)._u32[0] == mask;
-}
-/* is every tag of mask done (and none with a parked list)? Leaves the channels as they were. */
-static int na_tags_done(spu_context* ctx, uint32_t mask)
-{
-    if (ctx->list_stall_mask & mask) return 0;
-    if (!mask) return 1;
-    const uint32_t m0 = ctx->mfc_tag_mask, s0 = ctx->mfc_tag_status;
-    na_wrch(ctx, MFC_WrTagMask, mask);
-    na_wrch(ctx, MFC_WrTagUpdate, 0);
     const int done = spu_rdch(ctx, MFC_RdTagStat)._u32[0] == mask;
-    ctx->mfc_tag_mask = m0; ctx->mfc_tag_status = s0;
+    ctx->int_enable = 1;
     return done;
 }
 static inline void na_dma(spu_context* ctx, uint32_t lsa, uint32_t ea, uint32_t size, uint32_t tag, uint32_t cmd)
-{
+{                                                                   /* bid; LSA EAL Size TagID Cmd; bie */
+    ctx->int_enable = 0;
     na_wrch(ctx, MFC_LSA, lsa); na_wrch(ctx, MFC_EAL, ea); na_wrch(ctx, MFC_Size, size);
     na_wrch(ctx, MFC_TagID, tag); na_wrch(ctx, MFC_Cmd, cmd);
+    ctx->int_enable = 1;
 }
 static inline int na_committed(uint32_t ea, uint32_t n)
 {
@@ -1159,11 +1159,17 @@ static u128 na_shared(spu_context* ctx, uint32_t c, uint32_t size, u128 s1, int*
 /* GT5_ALLOC=2 (the native's ring space) and 3 (the lifted code's): inside the ring, clear of the RSX's label, and
  * clear of the space the ring's previous allocation took (kept per ring: each ring is one SPU's, its jobs take
  * space one after the other, but not always on the same worker thread, so a worker's own last space can be a lap
- * old). An allocation whose put is not where the ring's previous one ended (the ring's record was changed
- * between two jobs by something else) is counted ("ring put moved"), not failed. */
+ * old). An allocation whose put is not where the ring's previous one ended is counted ("ring put moved"), not
+ * failed: in the game these are the allocations the lifted code made instead (a busy ring, not recorded here;
+ * D71: the two counts are equal). An allocation that starts a new lap (fresh: the job read the ring's record with
+ * its put at the ring's base) is not compared with the last one: the game puts every ring back to its base
+ * between frames (the puts the jobs read are 25 % in the first 128 KB of the 1 MB rings, 1000 real jobs), so the
+ * first space of a frame lies on the previous frame's when that frame used little of the ring. Those were the
+ * "overlaps the ring's last" trips of D69 / D71 (every one at the ring's base, the same with the lifted code
+ * watched, GT5_ALLOC=3); "ring restarted at its base" counts them now. */
 static struct { uint32_t rbase, p, e; } g_na_rings[32];
 static volatile long g_na_rings_lock;
-static __attribute__((noinline)) void na_ring_check(uint32_t put, uint32_t nend, uint32_t rbase, uint32_t rend, uint32_t get, const char* who)
+static __attribute__((noinline)) void na_ring_check(uint32_t put, uint32_t nend, uint32_t rbase, uint32_t rend, uint32_t get, const char* who, int fresh)
 {
     char w[96];
     if (put < rbase || nend > rend || nend <= put) { snprintf(w, sizeof w, "ring space outside the ring%s", who); na_bad(w, put, nend, rend); }
@@ -1177,7 +1183,8 @@ static __attribute__((noinline)) void na_ring_check(uint32_t put, uint32_t nend,
         g_na_rings[i].rbase = rbase; g_na_rings[i].p = put; g_na_rings[i].e = nend;
     }
     __atomic_store_n(&g_na_rings_lock, 0, __ATOMIC_RELEASE);
-    if (le) {
+    if (fresh) NA_ADD(NA_RINGRESET, 1);       /* a new lap: the ring's put was its base when the job read the record */
+    else if (le) {
         if (put != le && put != rbase) NA_ADD(NA_RINGMOVED, 1);
         if (put < le && nend > lp) { snprintf(w, sizeof w, "ring space overlaps the ring's last%s", who); na_bad(w, put, lp, le); }
     }
@@ -1207,22 +1214,27 @@ static int na_reloc(spu_context* ctx, uint32_t c, uint32_t cursor, u128 r0v, u12
         *bie = 1;
     } else {
         const uint32_t tagw = na_rd(ls, c + 152u), mw = na_shl1(tagw);
-        if ((ctx->list_stall_mask & mw) || !na_poll(ctx, mw)) { NA_ADD(NA_L_TAG, 1); return NA_R_LIFT; }
+        if (ctx->list_stall_mask & mw) { NA_ADD(NA_L_TAG, 1); return NA_R_LIFT; }
+        while (!na_poll(ctx, mw)) NA_ADD(NA_L_TAG, 1);                          /* 0x44B0 */
         const uint32_t rbase = na_rd(ls, c + 0x80u), rend = na_rd(ls, c + 132u), lab = na_rd(ls, c + 140u);
         uint32_t put = na_rd(ls, c + 136u);
         const uint32_t sz = (n + 127u) & ~127u;
         const uint32_t wend = rbase + sz;
         uint32_t nend = put + sz;
         const int wrap = nend > rend;
-        na_dma(ctx, c, lab, 4u, tagw, 0x40u);
-        NA_ADD(NA_GETS, 1);
-        if (!na_poll(ctx, mw)) { NA_ADD(NA_L_TAG, 1); return NA_R_LIFT; }
-        const uint32_t get = na_rd(ls, c);
-        const int ok = (get <= put || get > nend) && (!wrap || get > wend);
         *bie = 1;
-        if (!ok) { NA_ADD(NA_L_BUSY, 1); return NA_R_LIFT; }
+        uint32_t get;
+        for (;;) {
+            na_dma(ctx, c, lab, 4u, tagw, 0x40u);                                 /* 0x4540 */
+            NA_ADD(NA_GETS, 1);
+            while (!na_poll(ctx, mw)) NA_ADD(NA_L_TAG, 1);                      /* 0x4570 */
+            get = na_rd(ls, c);
+            if ((get <= put || get > nend) && (!wrap || get > wend)) break;
+            NA_ADD(NA_L_BUSY, 1);                                                /* 0x45F8: 2400 decrementer reads, again */
+            for (int i = 0; i < 2400; i++) (void)spu_rdch(ctx, SPU_RdDec);
+        }
         if (wrap) { nend = wend; put = rbase; NA_ADD(NA_WRAPS, 1); }
-        if (NC_UNLIKELY(g_na_mode == 2)) na_ring_check(put, nend, rbase, rend, get, "");
+        if (NC_UNLIKELY(g_na_mode == 2)) na_ring_check(put, nend, rbase, rend, get, "", !wrap && put == rbase);
         na_wr(ls, c + 136u, nend);
         off = put;
         NA_ADD(NA_RING, 1);
@@ -1275,8 +1287,8 @@ static int na_alloc(spu_context* ctx)                                /* 1 = done
         const uint32_t desc2 = na_rd(ls, c + q2 + 196u);
         if ((desc2 & 0x3FFFFu) == 0) { NA_ADD(NA_L_JM, 1); return 0; }
         mask2 = na_shl1(desc2 >> 24);
-        /* the PUT's tag and the one waited on: done, no parked list; no relocated word may land on the descriptors */
-        if (!na_tags_done(ctx, mask2) || (ctx->list_stall_mask & na_shl1(desc >> 24))) { NA_ADD(NA_L_TAG, 1); return 0; }
+        /* no parked list on the PUT's tag or the one waited on; no relocated word may land on the descriptors */
+        if ((ctx->list_stall_mask & (mask2 | na_shl1(desc >> 24))) != 0) { NA_ADD(NA_L_TAG, 1); return 0; }
         if ((relptr | cursor) != 0) {
             if (cursor - (c + 0xC0u) < 16u) { NA_ADD(NA_L_GUARD, 1); return 0; }
             for (uint32_t i = 0; i < 16u; i++) if (na_rd(ls, c + 0x440u + 4u * i) - (c + 0xC0u) < 16u) { NA_ADD(NA_L_GUARD, 1); return 0; }
@@ -1371,8 +1383,8 @@ static __attribute__((noinline)) void na_watch_4330(spu_context* ctx)
     { int32_t _si = (int32_t)ctx->image_id; ctx->host_depth++; NC_ORIG(00004330)(ctx); spu_drain_call(ctx, link); ctx->host_depth--; spu_img_restore(ctx, _si); }
     const uint32_t put1 = na_rd(ls, c + 136u), get = na_rd(ls, c);
     if (ring && n && put1 != put0) {
-        if (put1 == put0 + sz) na_ring_check(put0, put1, rbase, rend, get, " (lifted)");
-        else if (put1 == rbase + sz) na_ring_check(rbase, put1, rbase, rend, get, " (lifted)");
+        if (put1 == put0 + sz) na_ring_check(put0, put1, rbase, rend, get, " (lifted)", put0 == rbase);
+        else if (put1 == rbase + sz) na_ring_check(rbase, put1, rbase, rend, get, " (lifted)", 0);
     }
 }
 static SPU_SV void na_4330(spu_context* ctx)
@@ -1940,12 +1952,13 @@ SPU_SV void NC_NATIVE(0000AB00)(spu_context* ctx)
     __attribute__((musttail)) return nc_0000AB00(ctx);
 }
 
-/* ---- 0xF6C0: the job's other cull routine (another list layout); counted, left as it is ------------ */
+/* ---- 0xF6C0: the job's other cull routine (another list layout); counted here, run by native_cad00.c -- */
 /* Called instead of 0xAB00 (path 0x7B10) when the word at ctx+0x244 points at a list of n > 0 64-byte
  * records (r9 here); r3 list, r4 line {triangles, vertices = ctx+0x104, OUT kept}, r5 view block, r6
  * batch matrix, r7 scratch, r8 positions. Its draw goes through the same command writer. Not replaced
  * yet (the records' meaning comes from real inputs: GT5_CULL_DUMP); in modes 1 and 2 its draws are
  * tagged report-only (rule bit 4) so the renderer shows their cull state too. */
+SPU_SV void cad_f6c0(spu_context* ctx);                 /* native_cad00.c */
 static SPU_SV void nc_0000F6C0(spu_context* ctx)
 {
     if (NC_UNLIKELY(nc_mode() != 0)) {
@@ -1965,9 +1978,10 @@ static SPU_SV void nc_0000F6C0(spu_context* ctx)
             t_pend.model_kept = 0xFFFFFFFFu; t_pend.used_all = 0; t_pend.has_map = 0; t_pend.base = 0;
         }
     }
-    __attribute__((musttail)) return NC_ORIG(0000F6C0)(ctx);
+    __attribute__((musttail)) return cad_f6c0(ctx);      /* native_cad00.c: GT5_CAD00_NATIVE */
 }
-SPU_SV void NC_NATIVE(0000F6C0)(spu_context* ctx)
+/* 0xF6C0's hook is native_cad00.c's (natives.txt): it comes here first, then to cad_f6c0 */
+SPU_SV void nc_f6c0_entry(spu_context* ctx)
 {
 #ifdef NC_HARNESS
     if (g_nc_f6c0_probe) g_nc_f6c0_probe(ctx);

@@ -341,6 +341,9 @@ namespace Gt5Launcher
             { "fgmethod", new[] { "Generator", "生成器" } },
             { "fgmethod.auto", new[] { "Auto (best available)", "自动（最佳可用）" } },
             { "fgmethod.builtin", new[] { "Built-in", "内置" } },
+            { "vsync", new[] { "Vertical sync", "垂直同步" } },
+            { "vsync.on", new[] { "On", "开" } },
+            { "vsync.off", new[] { "Off", "关" } },
             // The AMD FSR 3 row (an add-on, like NVIDIA DLSS).
             { "fsr.name", new[] { "AMD FSR 3", "AMD FSR 3" } },
             { "fsr.note", new[] { "From AMD, about 20 MB.", "来自 AMD，约 20 MB。" } },
@@ -512,12 +515,30 @@ namespace Gt5Launcher
             { "help.pkg", new[] { "Install a game update or DLC (.pkg)", "安装游戏更新或 DLC（.pkg）" } },
             { "pkg.title", new[] { "Installing game updates and DLC", "正在安装游戏更新和 DLC" } },
             { "pkg.done", new[] { "Installed.", "已安装。" } },
-            { "pkg.next", new[] { "Installed. To play the update, run setup.bat in the install folder once (about an hour).", "已安装。要玩这个更新，请在安装文件夹中运行一次 setup.bat（约一小时）。" } },
+            { "pkg.next", new[] { "Installed. The game is now built for this update (about 20 minutes).", "已安装。现在为这个更新构建游戏（约 20 分钟）。" } },
+            { "pkg.next.manual", new[] { "Installed. To play the update, run setup.bat in the install folder once (about an hour).", "已安装。要玩这个更新，请在安装文件夹中运行一次 setup.bat（约一小时）。" } },
+            { "pkg.build.title", new[] { "Building the game for the update", "正在为更新构建游戏" } },
+            { "pkg.build.done", new[] { "The game is built for the update. Press Play.", "游戏已为更新构建完成。请按“开始游戏”。" } },
+            { "pkg.build.notdone", new[] { "Building for the update didn't finish. Run setup.bat in the install folder to carry on.", "为更新构建未完成。请在安装文件夹中运行 setup.bat 继续。" } },
             { "pkg.dlc", new[] { "Installed. Each DLC also needs its licence key (README, DLC).", "已安装。每个 DLC 还需要对应的许可密钥（见 README 的 DLC 部分）。" } },
             { "pkg.notdone", new[] { "The packages weren't all installed.", "部分安装包未能安装。" } },
             { "pkg.norpcs3", new[] { "Unpacking packages needs RPCS3 (the PS3 emulator) on this PC. Install it from rpcs3.net, then try again.", "解包需要这台电脑上有 RPCS3（PS3 模拟器）。请从 rpcs3.net 安装后重试。" } },
             { "pkg.notpkg", new[] { "Those files aren't PS3 game packages.", "这些文件不是 PS3 游戏包。" } },
             { "pkg.some", new[] { "Some packages weren't installed. The log says which.", "部分安装包未能安装。详情见日志。" } },
+            // A game mod that comes as a zip of PDIPFS files (the GT5 Master Mod): install_mod.ps1
+            { "help.mod", new[] { "Install a game mod (.zip)", "安装游戏模组（.zip）" } },
+            { "help.modremove", new[] { "Remove the game mod", "移除游戏模组" } },
+            { "mod.title", new[] { "Installing the game mod", "正在安装游戏模组" } },
+            { "mod.rtitle", new[] { "Removing the game mod", "正在移除游戏模组" } },
+            { "mod.done", new[] { "Installed. The first start after this can take a while.", "已安装。之后的第一次启动可能需要一些时间。" } },
+            { "mod.notdone", new[] { "The mod wasn't installed. Nothing was changed.", "模组未安装。没有任何更改。" } },
+            { "mod.removed", new[] { "Removed. The game's own files are back.", "已移除。游戏原本的文件已恢复。" } },
+            { "mod.notremoved", new[] { "The mod wasn't removed.", "模组未能移除。" } },
+            { "mod.nofit", new[] { "This mod doesn't fit the game installed here. The Master Mod needs game update 2.11 exactly, and the zip made for your game's region.", "这个模组与这里安装的游戏不匹配。Master Mod 需要游戏更新 2.11（不能更高或更低），并且要用对应你游戏地区的 zip。" } },
+            { "mod.noupdate", new[] { "Install the game update the mod needs first (the button above).", "请先安装模组所需的游戏更新（上面的按钮）。" } },
+            { "mod.notmod", new[] { "That zip isn't a mod this can install.", "这个 zip 不是可以安装的模组。" } },
+            { "mod.ask.remove", new[] { "Remove the game mod?", "移除游戏模组？" } },
+            { "mod.ask.remove.text", new[] { "The game's own files come back. A save made with the mod may not load without it.", "游戏原本的文件会恢复。用模组存的存档在没有模组时可能无法读取。" } },
             // Joining GT.VOL when it was copied in pieces (Play)
             { "vol.ask", new[] { "Join the game's data?", "合并游戏数据？" } },
             { "vol.text", new[] { "The game's data was copied in pieces, as happens with some USB drives. The game needs it in one piece: joining takes a few minutes and about 12 GB of free space.", "游戏数据是分成多个部分复制的（某些 U 盘会这样）。游戏需要完整的一份：合并需要几分钟和约 12 GB 可用空间。" } },
@@ -3075,6 +3096,9 @@ namespace Gt5Launcher
             y = AddAddonRow(p, fsr, y);   // part of the Generator row (Addon.ForKey)
             // 3x and 4x: the built-in generator (the others make one frame between two: the row goes, as in the game).
             y = AddCombo(p, "fgmult", null, "LD_FRAMEGEN_MULT", new[] { new Choice("2", "2x"), new Choice("3", "3x"), new Choice("4", "4x") }, y);
+            // Vertical sync, as the game's menu has it (LD_PRESENT_SYNC: on unless 0). Off lets a G-Sync / FreeSync
+            // screen follow uneven frames (it tears on a fixed-refresh one).
+            y = AddCombo(p, "vsync", null, "LD_PRESENT_SYNC", new[] { new Choice("", T.Get("vsync.on")), new Choice("0", T.Get("vsync.off")) }, y);
             y = AddCombo(p, "window", "window.help", "GT5_LAUNCH_WINDOW", new[] { new Choice("windowed", T.Get("window.windowed")), new Choice("max", T.Get("window.max")), new Choice("borderless", T.Get("window.borderless")) }, y);
             y = AddCombo(p, "size", "size.help", "PS3_WINDOW_SIZE", WindowSizes(), y);
             y = AddCombo(p, "shape", "shape.help", "PS3_ASPECT", new[] { new Choice("auto", T.Get("shape.auto")), new Choice("16:9", "16:9"), new Choice("21:9", "21:9"), new Choice("32:9", "32:9") }, y);
@@ -3368,15 +3392,21 @@ namespace Gt5Launcher
                 new[] { "help.readme", "https://github.com/MormonFTP-hub/gt5-recomp#faq" },
                 new[] { "help.changes", "https://github.com/MormonFTP-hub/gt5-recomp/blob/main/CHANGELOG.md" },
                 new[] { "help.discord", "https://discord.gg/xvhGcuD7Kk" },
-                new[] { "help.shaders", "shaders" }, new[] { "help.pkg", "pkg" },
+                new[] { "help.shaders", "shaders" }, new[] { "help.pkg", "pkg" }, new[] { "help.mod", "mod" },
             };
-            foreach (var l in links)
+            // Two columns (the list no longer fits in one without scrolling): the first half down the left.
+            int rows = (links.Length + 1) / 2, y0 = y;
+            for (int i = 0; i < links.Length; i++)
             {
-                var b = new FlatButton(T.Get(l[0]), Look.Panel, Look.NavHot) { Location = new Point(0, y), Size = new Size(300, 40), TextAlign = ContentAlignment.MiddleLeft, Padding = new Padding(10, 0, 0, 0) };
+                var l = links[i];
+                var b = new FlatButton(T.Get(l[0]), Look.Panel, Look.NavHot) { Location = new Point(i < rows ? 0 : 316, y0 + (i % rows) * 48), Size = new Size(300, 40), TextAlign = ContentAlignment.MiddleLeft, Padding = new Padding(10, 0, 0, 0) };
                 string target = l[1];
                 b.Click += delegate { HelpAction(target); };
-                p.Controls.Add(b); y += 48;
+                // One button for the mod: it installs one, or removes the one that is installed.
+                if (target == "mod") { modButton = b; RefreshModButton(); }
+                p.Controls.Add(b);
             }
+            y = y0 + rows * 48;
             y = AddHelp(p, T.Get("help.about"), y + 6, 0);
             return p;
         }
@@ -3396,6 +3426,26 @@ namespace Gt5Launcher
                     dlg.Filter = "PS3 packages (*.pkg)|*.pkg"; dlg.Multiselect = true; dlg.Title = T.Get("help.pkg");
                     if (dlg.ShowDialog(this) != DialogResult.OK || dlg.FileNames.Length == 0) return;
                     InstallPkg(dlg.FileNames);
+                    return;
+                }
+                if (what == "mod")
+                {
+                    if (strip.Busy) { status.Text = T.Get("busy"); return; }
+                    if (GameRunning() || running) { strip.Note("help.mod", "fail.game"); return; }
+                    if (!File.Exists(ModScript())) { strip.Note("help.mod", "fail.update"); return; }
+                    if (ModInstalled())
+                    {
+                        strip.Ask("mod.ask.remove", "mod.ask.remove.text", "addon.remove", "ask.keep", delegate
+                        {
+                            if (GameRunning() || running) { strip.Note("help.mod", "fail.game"); return; }
+                            RunMod(null);
+                        }, null);
+                        return;
+                    }
+                    var dlg = new OpenFileDialog();
+                    dlg.Filter = "Game mod (*.zip)|*.zip"; dlg.Title = T.Get("help.mod");
+                    if (dlg.ShowDialog(this) != DialogResult.OK || string.IsNullOrEmpty(dlg.FileName)) return;
+                    RunMod(dlg.FileName);
                     return;
                 }
                 if (what == "save")
@@ -3842,11 +3892,18 @@ namespace Gt5Launcher
             var j = new HelperJob { TitleKey = "pkg.title", Script = PkgScript(), Log = "install_pkg", DoneKey = "pkg.done", AutoHide = false };
             j.Args.AddRange(files);
             j.Env["GT5_PKG_NOPAUSE"] = "1";
+            // A game update brings a new executable: the game has to be converted and built for it. That used to be
+            // a line telling the player to run setup.bat; the launcher now does it itself, right after.
+            bool needsBuild = false;
             j.Explain = delegate (string l, bool worked)
             {
                 if (worked)
                 {
-                    if (l.StartsWith("Next: run setup")) return "pkg.next";
+                    if (l.StartsWith("Next: run setup"))
+                    {
+                        needsBuild = SetupScript() != null;
+                        return needsBuild ? "pkg.next" : "pkg.next.manual";
+                    }
                     if (l.StartsWith("DLC: the vouchers")) return "pkg.dlc";
                     return null;
                 }
@@ -3855,7 +3912,84 @@ namespace Gt5Launcher
                 if (l.StartsWith("Not installed:")) return "pkg.some";
                 return null;
             };
-            j.Ended = delegate (bool ok) { status.Text = T.Get(ok ? "pkg.done" : "pkg.notdone"); };
+            j.Ended = delegate (bool ok)
+            {
+                status.Text = T.Get(ok ? "pkg.done" : "pkg.notdone");
+                if (ok && needsBuild) BuildForUpdate(0);
+            };
+            StartJob(j);
+        }
+
+        // setup.ps1 does whatever is still to do: for a new game executable, convert it and build the game.
+        string SetupScript()
+        {
+            try
+            {
+                string s = P.Root == null ? null : Path.Combine(P.Root, "setup.ps1");
+                return s != null && File.Exists(s) ? s : null;
+            }
+            catch { return null; }
+        }
+        void BuildForUpdate(int tries)
+        {
+            string s = SetupScript();
+            if (s == null) return;
+            if (strip.Busy || running)
+            {
+                // the strip is still showing the package job's end: try again shortly (a few seconds at most)
+                if (tries >= 20) { status.Text = T.Get("pkg.build.notdone"); return; }
+                var t = new System.Windows.Forms.Timer { Interval = 300 };
+                t.Tick += delegate { t.Stop(); t.Dispose(); if (!IsDisposed) BuildForUpdate(tries + 1); };
+                t.Start();
+                return;
+            }
+            if (GameRunning()) { status.Text = T.Get("pkg.build.notdone"); return; }
+            var j = new HelperJob { TitleKey = "pkg.build.title", Script = s, Log = "setup", DoneKey = "pkg.build.done", AutoHide = false };
+            j.Ended = delegate (bool ok) { status.Text = T.Get(ok ? "pkg.build.done" : "pkg.build.notdone"); };
+            StartJob(j);
+        }
+
+        // A game mod that is a zip of PDIPFS files (the GT5 Master Mod): install_mod.ps1 copies them over the game's
+        // update data in GT5\hdd0 after checking that the zip fits the game, keeps what it replaces, and lists what
+        // it did in USRDIR\mod_installed.txt; that list is how the launcher knows a mod is installed.
+        FlatButton modButton;
+        string ModScript() { return Path.Combine(P.Gt5, "scripts", "install_mod.ps1"); }
+        bool ModInstalled()
+        {
+            try
+            {
+                string games = Path.Combine(P.Gt5, "hdd0", "game");
+                if (!Directory.Exists(games)) return false;
+                foreach (string g in Directory.GetDirectories(games))
+                    if (File.Exists(Path.Combine(g, "USRDIR", "mod_installed.txt"))) return true;
+            }
+            catch { }
+            return false;
+        }
+        void RefreshModButton()
+        {
+            if (modButton != null && !modButton.IsDisposed) modButton.Text = T.Get(ModInstalled() ? "help.modremove" : "help.mod");
+        }
+        // zip == null: remove the installed mod.
+        void RunMod(string zip)
+        {
+            bool remove = zip == null;
+            var j = new HelperJob { TitleKey = remove ? "mod.rtitle" : "mod.title", StartKey = remove ? "st.remove" : "st.start", Script = ModScript(),
+                                    Log = remove ? "install_mod-remove" : "install_mod", DoneKey = remove ? "mod.removed" : "mod.done", AutoHide = false };
+            if (remove) j.Args.Add("-Remove"); else j.Args.Add(zip);
+            j.Explain = delegate (string l, bool worked)
+            {
+                if (worked) return null;
+                if (l.StartsWith("This mod doesn't fit")) return "mod.nofit";
+                if (l.StartsWith("This install has no game update data")) return "mod.noupdate";
+                if (l.Contains("isn't a mod this can install") || l.Contains("isn't a zip that can be read")) return "mod.notmod";
+                return null;
+            };
+            j.Ended = delegate (bool ok)
+            {
+                RefreshModButton();
+                status.Text = T.Get(remove ? (ok ? "mod.removed" : "mod.notremoved") : (ok ? "mod.done" : "mod.notdone"));
+            };
             StartJob(j);
         }
 

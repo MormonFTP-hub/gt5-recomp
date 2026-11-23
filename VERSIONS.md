@@ -6,6 +6,7 @@ the launcher's Updates page shows the newest one's notes.
 
 | Version | Date | What changed |
 |---|---|---|
+| [v0.1.111](https://github.com/MormonFTP-hub/gt5-recomp/releases/tag/v0.1.111) | 23 Nov 2026 | All SPU code converted and the first native geometry jobs, shorter loading stalls, a batch of speed and stability fixes, Master Mod installer, wheels with separate pedals, save folder fix |
 | [v0.1.110](https://github.com/MormonFTP-hub/gt5-recomp/releases/tag/v0.1.110) | 22 Nov 2026 | Installing game updates (.pkg) finds RPCS3 next to the packages or gets it itself; README: where saves are and how to bring one over from RPCS3 |
 | [v0.1.109](https://github.com/MormonFTP-hub/gt5-recomp/releases/tag/v0.1.109) | 20 Nov 2026 | Shaders no longer stall the game (prepared before start, built in the background, a stand-in draws meanwhile); frame generation on every screen; Button symbols; Save a report |
 | [v0.1.108](https://github.com/MormonFTP-hub/gt5-recomp/releases/tag/v0.1.108) | 18 Nov 2026 | Fills the screen, sharper shadows, analog triggers, pause and quit in the game, Vulkan menu, new launcher and installer |

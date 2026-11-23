@@ -203,6 +203,18 @@ function Press($scope, [string]$name) {
     if ($b) { try { $b.GetCurrentPattern([Windows.Automation.InvokePattern]::Pattern).Invoke(); return $true } catch {} }
     return $false
 }
+# Newer RPCS3 puts its offers (precompile caches, desktop / Start menu / Steam shortcuts) in the question
+# itself, some of them ticked: none is wanted here, so each is cleared before the question is answered.
+$chkType = New-Object Windows.Automation.PropertyCondition($A::ControlTypeProperty, [Windows.Automation.ControlType]::CheckBox)
+function Untick($scope) {
+    foreach ($c in $scope.FindAll($T::Descendants, $chkType)) {
+        if ($c.Current.Name -notmatch '[Ss]hortcut|[Pp]recompile') { continue }
+        try {
+            $tp = $c.GetCurrentPattern([Windows.Automation.TogglePattern]::Pattern)
+            for ($i = 0; $i -lt 2 -and $tp.Current.ToggleState -ne [Windows.Automation.ToggleState]::Off; $i++) { $tp.Toggle() }
+        } catch {}
+    }
+}
 
 $failed = @()
 foreach ($k in $pkgs) {
@@ -218,8 +230,9 @@ foreach ($k in $pkgs) {
     $cond = New-Object Windows.Automation.PropertyCondition($A::ProcessIdProperty, $p.Id)
     # RPCS3 0.0.37 asks "Do you want to install this package?" (Yes), shows "Installing package (1/1), please
     # wait...", then "Successfully installed software from package(s)!" with an offer of shortcuts and cache
-    # precompiling, which is left unanswered: RPCS3 is closed instead. Its errors ("Package cannot be
-    # installed on top of the current data...") are passed on.
+    # precompiling, which is left unanswered: RPCS3 is closed instead. RPCS3 0.0.43 asks the same question in
+    # a "PKG Installation" window whose button is Install, with those offers as tick boxes in it (cleared
+    # first). Its errors ("Package cannot be installed on top of the current data...") are passed on.
     $t0 = Get-Date; $asked = $false; $err = ""; $done = $false; $busy = $false; $stable = 0; $last = -1; $said = @{}
     while (((Get-Date) - $t0).TotalMinutes -lt $TimeoutMinutes) {
         if ($p.HasExited) { break }
@@ -227,7 +240,7 @@ foreach ($k in $pkgs) {
         try {
             foreach ($w in $A::RootElement.FindAll($T::Children, $cond)) {
                 $texts = (@($w.FindAll($T::Descendants, $txtType) | ForEach-Object { $_.Current.Name } | Where-Object { $_ }) -join " ")
-                if ($texts -match 'Do you want to install') { if (Press $w "Yes") { $asked = $true } }
+                if ($texts -match 'Do you want to install') { Untick $w; if ((Press $w "Yes") -or (Press $w "Install")) { $asked = $true } }
                 elseif ($texts -match '[Ss]uccessfully installed') { $done = $true }
                 elseif ($texts -match 'Installing package') { $busy = $true }
                 elseif ($texts -match 'cannot be installed|[Ff]ailed|[Ee]rror|not supported|invalid') {
