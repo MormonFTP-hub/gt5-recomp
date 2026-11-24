@@ -9,6 +9,15 @@ release on the tested rig in [STATUS.md](STATUS.md) unless a day says otherwise.
 
 ## 24 Nov 2026
 
+🏷️ Released as **v0.1.116**
+
+🚚 **Move the game to another drive (an SSD) without installing it again**
+
+- **An install folder can be moved or copied to another drive** (asked on Discord: "put everything on my SSD or install everything again?"). Move the whole folder; game files, saves, settings and the shader cache go with it. How to: README, [Move the game](README.md#move).
+  - The launcher, started from the new place, points the desktop shortcut there, and only when the shortcut leads nowhere (another install's shortcut is left alone).
+  - The next update (or `setup.bat`) makes the tools' Python environment again from the port's own Python, which moved along, when it still names the old place or another copy's.
+  - The build folder is set up again and the game compiled once more (`scripts\build.cmd`): CMake keeps the folder's full path and wouldn't build anywhere else. It tells a moved or copied build folder from its own by a file it puts there, so letter case, slashes and links in the path don't matter.
+
 🏷️ Released as **v0.1.115**
 
 🧹 **Setup needs only your game: no PS3 system software file, and RPCS3 is not used anywhere**

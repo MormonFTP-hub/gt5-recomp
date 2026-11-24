@@ -37,6 +37,19 @@ set "OLDCC="
 if exist "%~dp0..\build\CMakeCache.txt" for /f "tokens=1,* delims==" %%a in ('findstr /b /c:"CMAKE_CXX_COMPILER:" "%~dp0..\build\CMakeCache.txt"') do set "OLDCC=%%b"
 set "FRESH="
 if defined OLDCC if not exist "%OLDCC%" set "FRESH=--fresh"
+REM So is a build folder whose install was moved or copied (to an SSD, another drive): CMake keeps the build
+REM folder's full path and won't build anywhere else, so the game is compiled once more here. A file put in
+REM this build folder that the recorded path doesn't show means the recorded one is another folder (this works
+REM whatever the letter case, slashes or links in the two paths).
+set "OLDDIR="
+set "MOVED="
+if exist "%~dp0..\build\CMakeCache.txt" for /f "tokens=1,* delims==" %%a in ('findstr /b /c:"CMAKE_CACHEFILE_DIR:INTERNAL=" "%~dp0..\build\CMakeCache.txt"') do set "OLDDIR=%%b"
+if defined OLDDIR set "OLDDIR=%OLDDIR:/=\%"
+if defined OLDDIR echo here>"%~dp0..\build\gt5-here.tmp"
+if defined OLDDIR if not exist "%OLDDIR%\gt5-here.tmp" set "MOVED=1"
+if defined OLDDIR del "%~dp0..\build\gt5-here.tmp" 2>nul
+if defined MOVED set "FRESH=--fresh"
+if defined MOVED echo This folder was moved or copied: setting the build up again here, then building everything once more.
 if defined FRESH del "%~dp0..\build\build.ninja" 2>nul
 if not exist "%~dp0..\build\build.ninja" (
   cmake %FRESH% -S "%~dp0.." -B "%~dp0..\build" -G Ninja ^

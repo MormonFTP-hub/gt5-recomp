@@ -57,6 +57,7 @@ namespace Gt5Launcher
             }
             // --save-report [folder]: the report of the last run (ProblemReport) as a ZIP in that folder (else on the
             // desktop), with no window: for testing, and for a helper that collects a report.
+            if (args.Length >= 1 && args[0] == "--fix-shortcut") { FixMovedShortcut(); return; }
             if (args.Length >= 1 && args[0] == "--save-report")
             {
                 var p = new Paths();
@@ -80,11 +81,44 @@ namespace Gt5Launcher
             foreach (char c in dir) { h ^= c; h *= 16777619; }
             one = new Mutex(true, "Local\\GT5Launcher-" + h.ToString("x8"), out first);
             if (!first) { ShowOther(dir); return; }
+            FixMovedShortcut();
             // --play: press Play straight away (a "play directly" shortcut).
             var form = new LauncherForm(false);
             if (Array.IndexOf(args, "--play") >= 0) form.Shown += delegate { form.PlayNow(); };
             Application.Run(form);
             GC.KeepAlive(one);
+        }
+
+        // The install folder was moved (to an SSD, another drive): the desktop shortcut the installer made still points
+        // at the old place. Started from the new place, the launcher points it here, and only when the shortcut's own
+        // target is gone, so another install's shortcut is never taken over. GT5_INSTALL_LNKDIR (as for the installer)
+        // names another folder for the shortcut; "--fix-shortcut" does only this and exits (for testing).
+        static void FixMovedShortcut()
+        {
+            try
+            {
+                string me = Application.ExecutablePath;
+                if (!string.Equals(Path.GetFileName(me), "GT5Launcher.exe", StringComparison.OrdinalIgnoreCase)) return;
+                string where = Environment.GetEnvironmentVariable("GT5_INSTALL_LNKDIR");
+                if (string.IsNullOrEmpty(where)) where = Environment.GetFolderPath(Environment.SpecialFolder.Desktop);
+                string lnk = Path.Combine(where, "Gran Turismo 5 (PC).lnk");
+                if (!File.Exists(lnk)) return;
+                Type shellType = Type.GetTypeFromProgID("WScript.Shell");
+                if (shellType == null) return;
+                object shell = Activator.CreateInstance(shellType);
+                object sc = shellType.InvokeMember("CreateShortcut", BindingFlags.InvokeMethod, null, shell, new object[] { lnk });
+                Type st = sc.GetType();
+                string target = st.InvokeMember("TargetPath", BindingFlags.GetProperty, null, sc, null) as string;
+                if (string.IsNullOrEmpty(target) || File.Exists(target)) return;
+                if (!string.Equals(Path.GetFileName(target), "GT5Launcher.exe", StringComparison.OrdinalIgnoreCase)) return;
+                string dir = Path.GetDirectoryName(me);
+                st.InvokeMember("TargetPath", BindingFlags.SetProperty, null, sc, new object[] { me });
+                st.InvokeMember("WorkingDirectory", BindingFlags.SetProperty, null, sc, new object[] { dir });
+                string ico = Path.Combine(Path.Combine(dir, "tools"), "gt5.ico");
+                if (File.Exists(ico)) st.InvokeMember("IconLocation", BindingFlags.SetProperty, null, sc, new object[] { ico + ",0" });
+                st.InvokeMember("Save", BindingFlags.InvokeMethod, null, sc, null);
+            }
+            catch { }
         }
 
         static Mutex one;

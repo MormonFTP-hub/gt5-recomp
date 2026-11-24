@@ -115,6 +115,17 @@ function Test-VenvIsOwn {
     $h = (Get-Content -LiteralPath $cfg | Where-Object { $_ -match '^\s*home\s*=' } | Select-Object -First 1) -replace '^\s*home\s*=\s*', ''
     return ("$h".Trim().TrimEnd('\') -ieq (Split-Path $ownPy -Parent))
 }
+# This folder was moved or copied (to an SSD, another drive): an environment that names a Python that isn't there
+# any more, or another copy's own, doesn't start (or would use that copy's): it is made again below.
+$vcfg = Join-Path $venv "pyvenv.cfg"
+if (Test-Path -LiteralPath $vcfg) {
+    $vh = ((Get-Content -LiteralPath $vcfg | Where-Object { $_ -match '^\s*home\s*=' } | Select-Object -First 1) -replace '^\s*home\s*=\s*', '').Trim().TrimEnd('\')
+    $otherCopy = ($vh -match '\\tools\\python$') -and -not ($vh -ieq (Split-Path $ownPy -Parent))
+    if ($vh -and ($otherCopy -or -not (Test-Path -LiteralPath (Join-Path $vh "python.exe")))) {
+        Write-Host "            This folder was moved or copied: making the Python environment again here."
+        Remove-Item -LiteralPath $venv -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
 if (-not (Test-Path $py) -or ($env:GT5_OWN_PYTHON -eq "1" -and -not (Test-VenvIsOwn))) {
     if (-not (Test-Path $ownPy)) { & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $base "get-python.ps1") | ForEach-Object { Write-Host "            $_" } }
     if ((Test-Path $ownPy) -and (Test-Path $py) -and -not (Test-VenvIsOwn)) {

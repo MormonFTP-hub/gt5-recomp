@@ -59,6 +59,23 @@ function Finish([int]$code) {
 }
 function Fail([string]$m) { Write-Host "update: $m" -ForegroundColor Red; Finish 1 }
 function Warn([string]$m) { Write-Host $m -ForegroundColor Yellow }
+# This folder was moved or copied (to an SSD, another drive): its Python environment still names the Python it was
+# made from at the old place, and doesn't start there any more (or would use the other copy's). It is made again
+# here from the port's own Python, which moved along in tools\python; the pip step further down fills it. The build
+# folder is set up again by scripts\build.cmd. Game files, saves and settings move as they are.
+function Repair-MovedVenv {
+    $cfg = Join-Path $base "venv\pyvenv.cfg"
+    if (-not (Test-Path -LiteralPath $cfg)) { return }
+    $vh = ((Get-Content -LiteralPath $cfg | Where-Object { $_ -match '^\s*home\s*=' } | Select-Object -First 1) -replace '^\s*home\s*=\s*', '').Trim().TrimEnd('\')
+    $own = Join-Path $base "tools\python"
+    $otherCopy = ($vh -match '\\tools\\python$') -and -not ($vh -ieq $own)
+    if (-not $vh -or ((Test-Path -LiteralPath (Join-Path $vh "python.exe")) -and -not $otherCopy)) { return }
+    Write-Host "This folder was moved or copied: making its Python environment again here..."
+    Remove-Item -LiteralPath (Join-Path $base "venv") -Recurse -Force -ErrorAction SilentlyContinue
+    if (Test-Path -LiteralPath (Join-Path $own "python.exe")) { & (Join-Path $own "python.exe") -m venv (Join-Path $base "venv") }
+    if (-not (Test-Path -LiteralPath $py)) { Warn "The Python environment couldn't be made again here: run setup.bat in this folder." }
+}
+Repair-MovedVenv
 function Describe {
     if (-not (Test-Path (Join-Path $base ".git"))) { return "a downloaded copy (not a git clone)" }
     $t = git -C $base describe --tags --exact-match HEAD 2>$null

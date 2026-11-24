@@ -6,6 +6,7 @@ the launcher's Updates page shows the newest one's notes.
 
 | Version | Date | What changed |
 |---|---|---|
+| [v0.1.116](https://github.com/MormonFTP-hub/gt5-recomp/releases/tag/v0.1.116) | 24 Nov 2026 | Move the game to another drive (an SSD) without installing it again |
 | [v0.1.115](https://github.com/MormonFTP-hub/gt5-recomp/releases/tag/v0.1.115) | 24 Nov 2026 | Setup needs only your game: no PS3 system software file, and RPCS3 is not used anywhere (updates, DLC packages and executables handled by the port's own tool) |
 | [v0.1.114](https://github.com/MormonFTP-hub/gt5-recomp/releases/tag/v0.1.114) | 24 Nov 2026 | Linux: no more black screen at start when the sound goes through PulseAudio or PipeWire (#20) |
 | [v0.1.113](https://github.com/MormonFTP-hub/gt5-recomp/releases/tag/v0.1.113) | 24 Nov 2026 | Wheels: each pedal can be on a device of its own (the in-game menu takes a pedal from whichever device you push it on); wheel bases that don't call themselves a wheel are found by themselves |

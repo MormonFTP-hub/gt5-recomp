@@ -630,6 +630,18 @@ in its paths. The installer's `GT5-Installer.log` attaches as it is. For a
 graphics problem, also say the mode, the track and its time or weather (for example Arcade, Chamonix,
 snow): some problems show on one track and not another.
 
+<a id="move"></a>
+
+**Q: Can I move the game to another drive (an SSD), or do I have to install it again?**
+
+**A: Move it; no new install.** Close the launcher and the game, then move (or copy) the whole install folder,
+the one with `GT5Launcher.exe` in it. Your game files, saves, settings and shader cache go with it. Start
+`GT5Launcher.exe` from the new place once: it points the desktop shortcut there (only when the old one leads
+nowhere). The game plays from the new folder straight away. At the next update (or `setup.bat`), two things that
+remember the old place are made again by themselves, with nothing downloaded: the tools' Python environment
+(`venv`), and the build folder, so the game is compiled once more (as long as the first install's build took).
+Since v0.1.116.
+
 **Q: How do I clear the shader cache?**
 
 **A: Launcher, Help, Clear the shader cache, or double-click `ClearShaders.bat` in your install
