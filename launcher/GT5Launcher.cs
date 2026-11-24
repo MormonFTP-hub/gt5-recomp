@@ -522,7 +522,7 @@ namespace Gt5Launcher
             { "pkg.build.notdone", new[] { "Building for the update didn't finish. Run setup.bat in the install folder to carry on.", "为更新构建未完成。请在安装文件夹中运行 setup.bat 继续。" } },
             { "pkg.dlc", new[] { "Installed. Each DLC also needs its licence key (README, DLC).", "已安装。每个 DLC 还需要对应的许可密钥（见 README 的 DLC 部分）。" } },
             { "pkg.notdone", new[] { "The packages weren't all installed.", "部分安装包未能安装。" } },
-            { "pkg.norpcs3", new[] { "Unpacking packages needs RPCS3 (the PS3 emulator) on this PC. Install it from rpcs3.net, then try again.", "解包需要这台电脑上有 RPCS3（PS3 模拟器）。请从 rpcs3.net 安装后重试。" } },
+            { "pkg.nounpack", new[] { "This install is missing a part it needs to unpack packages. Press Update now on the Updates page, then try again.", "此安装缺少解包所需的组件。请先在“更新”页点击“立即更新”，然后重试。" } },
             { "pkg.notpkg", new[] { "Those files aren't PS3 game packages.", "这些文件不是 PS3 游戏包。" } },
             { "pkg.some", new[] { "Some packages weren't installed. The log says which.", "部分安装包未能安装。详情见日志。" } },
             { "pkg.order", new[] { "Updates install only in order, and some before these are missing (Details says which). Pick every update from 1.05 on, or use Help > Game version and DLC, which downloads them for you.", "更新只能按顺序安装，前面缺少一些更新（详情中列出）。请选择从 1.05 起的所有更新，或使用“帮助 > 游戏版本和 DLC”，它会为你下载。" } },
@@ -4091,7 +4091,7 @@ namespace Gt5Launcher
 
         string PkgScript() { return Path.Combine(P.Gt5, "scripts", "install_pkg.ps1"); }
 
-        // install_pkg.ps1 does the work through RPCS3 (its own window, minimized, answered by the script) and
+        // install_pkg.ps1 does the work (the port's own unpacker: no other program, no window) and
         // update_exe.ps1; before, it ran in a console window of its own and waited for Enter at the end.
         void InstallPkg(string[] files)
         {
@@ -4113,7 +4113,7 @@ namespace Gt5Launcher
                     if (l.StartsWith("DLC: the vouchers")) return "pkg.dlc";
                     return null;
                 }
-                if (l.Contains("RPCS3 wasn't found")) return "pkg.norpcs3";
+                if (l.Contains("This install is missing a part")) return "pkg.nounpack";
                 if (l.StartsWith("Updates install only in order")) return "pkg.order";
                 if (l.Contains("None of those is a PS3 package") || l.Contains("No .pkg files")) return "pkg.notpkg";
                 if (l.StartsWith("Not installed:")) return "pkg.some";
@@ -4150,7 +4150,7 @@ namespace Gt5Launcher
                 if (l.StartsWith("A game mod is installed")) return "ver.modon";
                 if (l.StartsWith("Not enough free space")) return "ver.space";
                 if (l.StartsWith("Downloading update") || l.Contains("didn't come down as Sony lists it")) return "ver.net";
-                if (l.Contains("RPCS3 wasn't found") || l.Contains("RPCS3 couldn't be fetched")) return "pkg.norpcs3";
+                if (l.Contains("This install is missing a part")) return "pkg.nounpack";
                 if (l.StartsWith("The game isn't at") || l.StartsWith("The update's executable")) return "ver.notdone";
                 return null;
             };

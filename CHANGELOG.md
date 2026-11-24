@@ -9,7 +9,19 @@ release on the tested rig in [STATUS.md](STATUS.md) unless a day says otherwise.
 
 ## 24 Nov 2026
 
-🏷️ Released as **v0.1.114**
+🏷️ Released as **v0.1.115**
+
+🧹 **Setup needs only your game: no PS3 system software file, and RPCS3 is not used anywhere**
+- **The installer asks for two things now: your game and a folder.** `PS3UPDAT.PUP` is no longer asked for. The game never reads the PS3's system files: neither the 1.00 nor the 2.11 executable names that folder, every system function the game calls is the port's own code, and with the folder empty and every file access logged, Europe 1.00 and Europe 2.11 with the Master Mod both went from start through the menus into a race without one access to it. GT Mode and Photo Mode were not driven in that check.
+  - An existing install needs nothing done; its `GT5\dev_flash` folder is no longer used and can be deleted (about 190 MB).
+- **Game updates and DLC packages (`.pkg`) are unpacked by the port's own tool**, no longer by RPCS3 (which was fetched for it, and whose window had to be answered by a script). Each package's own checksum is checked before anything is written, updates go in order, and a file that is there is replaced only where the package says so.
+  - Checked against RPCS3: Europe's updates 1.05 to 2.11 give the same 21,531 files (3.9 GB), byte for byte.
+  - **Help** > **Game version and DLC** uses it too: the disc version to 2.11 took 96 seconds on the test PC with the packages already downloaded; going on to 2.17, back to 1.06, to 1.00 and to 2.01 all worked, and the 2.11 and 2.17 executables came out byte for byte as RPCS3 unlocks them.
+  - An update given without the ones before it, and a damaged package, are refused before anything is written.
+  - Not checked: DLC packages (none on the test PC) and the other regions' packages.
+- **An update's executable is unlocked by the port's own tool** (as the disc's already was). The installer no longer fetches RPCS3 as a fallback.
+- **Setting up by hand** (`setup.bat`, and `setup.sh` on Linux): setup unlocks your disc's `EBOOT.BIN` itself; the steps "install the firmware in RPCS3" and "decrypt the executable in RPCS3" are gone. Not run on a Linux PC yet.
+- The keys still come from a public text file (RPCS3's source on GitHub, at a pinned commit, checked by SHA-256): this project publishes no keys.
 
 🏷️ Released as **v0.1.114**
 

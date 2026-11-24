@@ -164,19 +164,31 @@ echo
 echo "Your files (see Linux in README.md for where each comes from):"
 mkdir -p "$GT5/input" "$GT5/vfs"
 ELF="$GT5/input/EBOOT.elf"
-if [ ! -f "$ELF" ]; then
-    if [ -f "$GT5/input/EBOOT.BIN" ]; then
-        todo "GT5/input/EBOOT.elf" "You have EBOOT.BIN there, but the tools need the DECRYPTED file: in RPCS3, Utilities > Decrypt PS3 Binaries, pick EBOOT.BIN, and put the result in GT5/input named EBOOT.elf."
+# The game's executable is locked as it comes on the disc (EBOOT.BIN). The port's own tool unlocks it
+# (scripts/ps3_unlock.py: no RPCS3): from GT5/input/EBOOT.BIN, a locked file named EBOOT.elf, or the disc
+# copy's own PS3_GAME/USRDIR/EBOOT.BIN.
+LOCKED=""
+if [ -f "$ELF" ]; then
+    if [ "$(head -c 4 "$ELF" | od -An -tx1 | tr -d ' \n')" = "53434500" ]; then LOCKED="$ELF.locked"; mv -f "$ELF" "$LOCKED"; fi
+else
+    for c in "$GT5/input/EBOOT.BIN" "$GT5/vfs/PS3_GAME/USRDIR/EBOOT.BIN"; do
+        if [ -f "$c" ]; then LOCKED="$c"; break; fi
+    done
+fi
+if [ -n "$LOCKED" ] && [ ! -f "$ELF" ]; then
+    if "$PY" -I "$GT5/scripts/ps3_unlock.py" eboot "$LOCKED" "$ELF" --keys-dir "$BASE/tools/ps3_keys" > "$BASE/unlock.log" 2>&1; then
+        ok "GT5/input/EBOOT.elf: unlocked from $LOCKED"
     else
-        todo "GT5/input/EBOOT.elf (your decrypted game executable)" "In RPCS3, Utilities > Decrypt PS3 Binaries, pick your disc's PS3_GAME/USRDIR/EBOOT.BIN, and put the result in GT5/input named EBOOT.elf."
+        echo "  [note]    Unlocking the game's executable ($LOCKED): $(grep '^PS3_UNLOCK_FAIL' "$BASE/unlock.log" | tail -1 | cut -d: -f2-)"
     fi
+fi
+if [ ! -f "$ELF" ]; then
+    todo "GT5/input/EBOOT.elf (your game's executable)" "Copy your disc's PS3_GAME folder to GT5/vfs (so that GT5/vfs/PS3_GAME/USRDIR/EBOOT.BIN exists) and run setup again: it unlocks the executable by itself."
 else
     magic="$(head -c 4 "$ELF" | od -An -tx1 | tr -d ' \n')"
     sha1="$(sha1sum "$ELF" | cut -d' ' -f1 | tr a-f A-F)"
-    if [ "$magic" = "53434500" ]; then
-        todo "a decrypted GT5/input/EBOOT.elf" "This file is still encrypted (it's EBOOT.BIN renamed). Decrypt it in RPCS3: Utilities > Decrypt PS3 Binaries."
-    elif [ "$magic" != "7f454c46" ]; then
-        todo "a valid GT5/input/EBOOT.elf" "This file isn't a PS3 executable. Decrypt your disc's PS3_GAME/USRDIR/EBOOT.BIN in RPCS3 and use the result."
+    if [ "$magic" != "7f454c46" ]; then
+        todo "a valid GT5/input/EBOOT.elf" "This file isn't a PS3 executable. Delete it and run setup again: it is made from your disc's PS3_GAME/USRDIR/EBOOT.BIN."
     else
         case "$sha1" in
             1535B865EC7DD58E7704B378B8621532ECF844E1) ok "GT5/input/EBOOT.elf: Europe BCES00569, version 01.00 (the tested one)" ;;
@@ -216,11 +228,7 @@ else
     todo "GT5/vfs/PS3_GAME (your disc's game data, about 17 GB)" "Copy the PS3_GAME folder from your disc dump to GT5/vfs, so that GT5/vfs/PS3_GAME/USRDIR exists."
 fi
 
-FLASH="$GT5/dev_flash"
-if [ -d "$FLASH/sys" ]; then ok "GT5/dev_flash (PS3 system software)"
-elif [ -d "$FLASH/dev_flash/sys" ]; then todo "GT5/dev_flash at the right level" "It's one folder too deep: move the contents of GT5/dev_flash/dev_flash up into GT5/dev_flash."
-else todo "GT5/dev_flash (PS3 system software)" "In RPCS3, File > Install Firmware with Sony's PS3UPDAT.PUP, then copy RPCS3's dev_flash folder (~/.config/rpcs3/dev_flash) to GT5/dev_flash."
-fi
+# The PS3's system software (GT5/dev_flash) is not needed: the game never reads it.
 
 echo
 if [ "$TODO" -gt 0 ]; then

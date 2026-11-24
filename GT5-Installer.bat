@@ -1,7 +1,7 @@
 <# : GT5-Installer.bat
 @echo off
-rem GT5 Recomp - installer. Double-click it. A window asks for your own copy of GT5 and the PS3
-rem system software file, then installs everything else and builds the game, showing how far it has got.
+rem GT5 Recomp - installer. Double-click it. A window asks for your own copy of GT5, then installs
+rem everything else and builds the game, showing how far it has got.
 rem Run it again any time to update, or to carry on if something stopped it: it skips what's already done.
 setlocal
 set "GT5_INSTALLER=%~f0"
@@ -34,13 +34,12 @@ goto :eof
 #   3. fetches the port's own Python (python.org's 3.11.9, 17 MB) into tools\python and, without Visual
 #      Studio, the compiler tools (about 1.5 GB) into tools\toolchain. Nothing is installed in Windows, and
 #      Visual Studio is never installed or changed.
-#   4. installs the PS3 system software from Sony's PS3UPDAT.PUP into GT5\dev_flash
-#   5. copies your game (a disc folder or an .iso) into GT5\vfs
-#   6. unlocks (decrypts) the game's EBOOT.BIN into GT5\input\EBOOT.elf
-#   7. and 8. runs setup.ps1, which generates the game code and builds gt5.exe with both renderers
+#   4. copies your game (a disc folder or an .iso) into GT5\vfs
+#   5. unlocks (decrypts) the game's EBOOT.BIN into GT5\input\EBOOT.elf
+#   6. and 7. runs setup.ps1, which generates the game code and builds gt5.exe with both renderers
 #      (DirectX 12 and Vulkan) and GT5Launcher.exe, then adds AMD FSR 3 and, when the line named it, NVIDIA DLSS
-# Steps 4 and 6 need Sony's keys, which this project never publishes: GT5\scripts\ps3_unlock.py fetches
-# them from RPCS3's public source, and RPCS3 itself is fetched as a fallback tool only when that fails.
+# Step 5 needs Sony's keys, which this project never publishes: GT5\scripts\ps3_unlock.py reads them out of
+# a public text file (RPCS3's source on GitHub, at a pinned commit). No other program is used for it.
 #
 # How this file is put together. The batch lines above run this PowerShell code (Windows PowerShell 5.1)
 # in one of four roles, from GT5_INSTALLER_ROLE:
@@ -56,7 +55,7 @@ goto :eof
 #
 # Test switches (environment variables):
 #   GT5_INSTALL_NOGUI=1        no window: the whole install in the console
-#   GT5_INSTALL_GAME / _FIRMWARE / _DEST   the three choices (with the window: the fields' first values)
+#   GT5_INSTALL_GAME / _DEST   the two choices (with the window: the fields' first values)
 #   GT5_INSTALL_NOBUILD=1      stop before the game code and the build (setup.ps1 -NoBuild)
 #   GT5_INSTALL_LNKDIR=<dir>   where the desktop shortcut goes
 #   GT5_INSTALL_NOVS=1         act as if there were no Visual Studio (the compiler tools and their licence)
@@ -65,10 +64,8 @@ goto :eof
 #   GT5_INSTALL_RAMGB=<n>      act as if the PC had n GB of memory
 #   GT5_INSTALL_ACCEPTED=<ids> console: what was accepted, without the question ("none", or "dlss,msvc")
 #   GT5_INSTALL_NOGIT=1        act as if there were no Git (the portable MinGit in tools\git)
-#   GT5_INSTALL_RPCS3=1        unlock with RPCS3 even when ps3_unlock.py could do it
-#   GT5_INSTALL_NOTAR=1, GT5_INSTALL_NO7Z=1   RPCS3 unpacking: skip tar / the PC's 7-Zip
 #   GT5_INSTALL_UISCALE=<k>    draw the window at that scale (1.5 = 150 %)
-#   GT5_INSTALL_AUTOGO=1       the window fills in the three choices and presses Install itself
+#   GT5_INSTALL_AUTOGO=1       the window fills in the two choices and presses Install itself
 #   GT5_INSTALL_SNAP=<dir>     the window saves a picture of itself at each stage (and stays off screen)
 #   GT5_INSTALL_TESTCANCEL=<s> the window cancels <s> seconds into the work, without asking
 #   GT5_INSTALL_AUTOCLOSE=1    the window closes itself on the last page
@@ -92,11 +89,10 @@ if ($Role -eq "") {
     } catch { exit 2 }
 }
 
-# ---- Shared: settings, the log, the game / firmware / folder checks --------------------------------------
+# ---- Shared: settings, the log, the game / folder checks --------------------------------------
 # GitHub and the other download sites need TLS 1.2, which Windows PowerShell 5.1 doesn't always offer.
 [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 $RepoUrl   = "https://github.com/MormonFTP-hub/gt5-recomp.git"
-$SonyPage  = "https://www.playstation.com/en-us/support/hardware/ps3/system-software/"
 $HelpPage  = "https://github.com/MormonFTP-hub/gt5-recomp/issues/new?template=2-problem.yml"
 $Supported = @{ "BCES00569" = "Europe"; "BCUS98114" = "North America" }
 # Other GT5 releases, by their title in any language: "Gran Turismo 5" / "GT5", GT + "racing car" + 5
@@ -111,7 +107,7 @@ $NeedGB    = 25
 $NeedUpdateGB = 5   # an existing install: the build's changed files and the code generated again
 $NeedRamGB = 8
 $StepTitles = @("Getting ready", "Downloading the code", "Build tools",
-                "PS3 system software", "Your game files", "Preparing the game",
+                "Your game files", "Preparing the game",
                 "Converting the game", "Building the game")
 $Total = $StepTitles.Count
 $Utf8 = New-Object Text.UTF8Encoding($false)
@@ -244,16 +240,6 @@ function Get-GameInfo([string]$pick) {
     return $info
 }
 
-function Test-Pup([string]$f) {
-    if (-not $f) { return "" }
-    if (-not (Test-Path -LiteralPath $f -PathType Leaf)) { return "That file isn't there." }
-    try {
-        $s = [IO.File]::OpenRead($f); $h = New-Object byte[] 5; [void]$s.Read($h, 0, 5); $len = $s.Length; $s.Close()
-    } catch { return "Couldn't read that file." }
-    if ([Text.Encoding]::ASCII.GetString($h) -ne "SCEUF" -or $len -lt 100MB) { return "That isn't a PS3 system software file (PS3UPDAT.PUP)." }
-    return "ok"
-}
-
 # Markers in the install folder's .gt5 (git ignores it): an install was started here (so a stopped one can
 # carry on in a folder that is no longer empty), and a copy that was started but hasn't finished.
 function Get-Mark([string]$base, [string]$name) { return (Join-Path $base ".gt5\installer-$name.txt") }
@@ -276,7 +262,6 @@ function Get-DestState([string]$d) {
     $existing = (Test-Path -LiteralPath (Join-Path $full "setup.ps1")) -and (Test-Path -LiteralPath (Join-Path $full "GT5"))
     $resume = (-not $existing) -and (Test-Mark $full "started")
     $st = @{ Ok = $true; Full = $full; Existing = $existing; Resume = $resume; Free = $free
-             HasFw = (Test-Path -LiteralPath (Join-Path $full "GT5\dev_flash\sys")) -and -not (Test-Mark $full "firmware-partial")
              HasGame = (Test-Path -LiteralPath (Join-Path $full "GT5\vfs\PS3_GAME\USRDIR")) -and -not (Test-Mark $full "game-partial") }
     # The space still needed: all of it for a new folder; an install that has the game's data (GT.VOL, 12 GB) needs
     # room for the build; an update rebuilds what changed.
@@ -719,24 +704,18 @@ function Get-Code([string]$base) {
 }
 
 # =====================================================================================================
-# Unlocking Sony's files. The game's EBOOT.BIN and Sony's firmware file are encrypted with Sony's keys,
-# which this project never publishes. Everything that knows how is in this section, behind two functions:
-#   Unlock-Firmware <PS3UPDAT.PUP> <dev_flash folder>   puts the system files from Sony's update file into
-#                                                       that folder (sys\external, ... as on a PS3)
-#   Unlock-Eboot <EBOOT.BIN> <EBOOT.elf>                writes the decrypted executable
-# Each returns $true when its result is there and checked, $false when no way worked, and stops the
-# install (Stop-Install) when the player's file itself is wrong. They report through Set-Now / Set-Pct /
-# Say / Note only.
-# First choice: GT5\scripts\ps3_unlock.py on the port's own Python (it fetches the key tables from RPCS3's
-# public source at a pinned commit, checked by SHA-256). Fallback: RPCS3, downloaded only then and used
-# only as a tool, its windows kept hidden.
+# Unlocking the game's executable. EBOOT.BIN is locked with Sony's keys, which this project never
+# publishes: GT5\scripts\ps3_unlock.py (on the port's own Python) reads them out of a public text file
+# (RPCS3's source on GitHub, at a pinned commit, checked by SHA-256). No other program is used.
+#   Unlock-Eboot <EBOOT.BIN> <EBOOT.elf>   writes the unlocked executable; $true when it is there and
+#   checked. It stops the install (Stop-Install) with the reason when the file or the download is the
+#   problem. It reports through Set-Now / Set-Pct / Say / Note only.
 # =====================================================================================================
-$script:Base = $null; $script:Tools = $null; $script:Rpcs3 = $null
+$script:Base = $null; $script:Tools = $null
 
-# ps3_unlock.py: @{ Code; Line } (Code 98: switched off by GT5_INSTALL_RPCS3, 99: not in this copy)
+# ps3_unlock.py: @{ Code; Line } (Code 99: not in this copy)
 function Invoke-Ps3Unlock([string[]]$a, [string]$now, [string]$hint, [scriptblock]$tick = $null) {
     $u = @{ Code = 0; Line = "" }
-    if ($env:GT5_INSTALL_RPCS3) { $u.Code = 98; return $u }
     $py = Join-Path $script:Tools "python\python.exe"
     $tool = Join-Path $script:Base "GT5\scripts\ps3_unlock.py"
     if (-not (Test-Path -LiteralPath $py) -or -not (Test-Path -LiteralPath $tool)) { $u.Code = 99; return $u }
@@ -748,58 +727,15 @@ function Invoke-Ps3Unlock([string[]]$a, [string]$now, [string]$hint, [scriptbloc
     } -OnTick $tick
     return $u
 }
-function Write-Fallback($u, [string]$what) {
-    if ($u.Code -eq 98) { Say "  Unlocking $what with RPCS3 (test switch GT5_INSTALL_RPCS3)." }
-    elseif ($u.Code -eq 99) { Say "  This copy of the code can't unlock $what by itself: RPCS3 does it instead." }
-    else { Say "  Unlocking $what directly didn't work ($(if ($u.Line) { $u.Line } else { "code $($u.Code)" })): RPCS3 does it instead." }
-}
-
-function Unlock-Firmware([string]$pup, [string]$devFlash) {
-    # ps3_unlock.py unpacks into <dev_flash>.part first: its file count is the figure (1075 for 4.92).
-    $fw = @{ Part = "$devFlash.part"; T = 0 }
-    $u = Invoke-Ps3Unlock @("firmware", $pup, $devFlash) "Unpacking Sony's system software file" "Under a minute on most PCs (it writes about 1,000 files)." {
-        if (([Environment]::TickCount - $fw.T) -lt 1500) { return }
-        $fw.T = [Environment]::TickCount
-        $n = 0; try { $n = @([IO.Directory]::EnumerateFiles($fw.Part, "*", [IO.SearchOption]::AllDirectories)).Count } catch {}
-        if ($n -gt 0) { Set-Pct ([math]::Min(99, 100.0 * $n / 1075)) "$n system files" }
-    }
-    if ($u.Code -eq 0 -and (Test-Path -LiteralPath (Join-Path $devFlash "sys\external"))) { return $true }
-    if ($u.Code -eq 3) { Stop-Install "Sony's system software file can't be used: $($u.Line). Choose an undamaged PS3UPDAT.PUP (Get it from Sony) and press Try again." }
-    Write-Fallback $u "the system software"
-    $rp = Get-Rpcs3
-    $flash = Join-Path (Split-Path $rp) "dev_flash"
-    $okMark = Join-Path (Split-Path $rp) "gt5-firmware-installed.txt"
-    if (-not (Test-Path -LiteralPath $okMark)) {
-        # A half-finished install in RPCS3's folder would make it ask about "old firmware": start clean.
-        Remove-Item -LiteralPath $flash -Recurse -Force -ErrorAction SilentlyContinue
-        Set-Now "Installing the PS3 system software" "A few minutes."
-        if (-not (Install-Rpcs3Firmware $rp $pup)) { return $false }
-        [IO.File]::WriteAllText($okMark, (Get-Date -Format "yyyy-MM-dd HH:mm:ss"))
-    }
-    Set-Now "Installing the PS3 system software"; Set-Pct -1
-    $code = Invoke-Tool "robocopy.exe" @($flash, $devFlash, "/E", "/R:1", "/W:1", "/NFL", "/NDL", "/NJH", "/NJS", "/NP") -Quiet
-    return ($code -lt 8 -and (Test-Path -LiteralPath (Join-Path $devFlash "sys\external")))
-}
 
 function Unlock-Eboot([string]$bin, [string]$elf) {
     $u = Invoke-Ps3Unlock @("eboot", $bin, $elf) "Unlocking EBOOT.BIN" "A few seconds."
     if ($u.Code -eq 0 -and (Test-ElfFile $elf)) { return $true }
     if ($u.Code -eq 3) { Stop-Install "unlocking EBOOT.BIN failed: $($u.Line). If your game is an encrypted disc image (a 'Redump' .iso), decrypt the image first or use a folder dump of the disc." }
-    Write-Fallback $u "EBOOT.BIN"
-    $rp = Get-Rpcs3
-    $work = Join-Path (Split-Path (Split-Path $rp)) "decrypt"
-    Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue
-    New-Item -ItemType Directory -Force $work | Out-Null
-    Copy-Item -LiteralPath $bin (Join-Path $work "EBOOT.BIN")
-    Set-Now "Preparing the game" "Under a minute."
-    $p = Start-Rpcs3 $rp @("--no-gui", "--decrypt", "`"$(Join-Path $work 'EBOOT.BIN')`"")
-    if (-not $p.WaitForExit(180000)) { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue }
-    Stop-Rpcs3Watch
-    $out = Join-Path $work "EBOOT.elf"
-    $ok = Test-ElfFile $out
-    if ($ok) { Move-Item -LiteralPath $out $elf -Force }
-    Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue
-    return $ok
+    if ($u.Code -eq 2) { Stop-Install "couldn't get what unlocking the game needs from GitHub ($($u.Line)). Check the internet connection and press Try again." }
+    if ($u.Code -eq 99) { Stop-Install "this copy of the code has no unlock tool (see Details). Press Try again." }
+    Say "  Unlocking EBOOT.BIN didn't work ($(if ($u.Line) { $u.Line } else { "code $($u.Code)" }))."
+    return $false
 }
 function Test-ElfFile([string]$f) {
     if (-not (Test-Path -LiteralPath $f)) { return $false }
@@ -807,165 +743,11 @@ function Test-ElfFile([string]$f) {
     return ($b[0] -eq 0x7F -and $b[1] -eq 0x45 -and $b[2] -eq 0x4C -and $b[3] -eq 0x46)
 }
 
-# RPCS3 into tools\rpcs3, once. It is unpacked into rpcs3.part and renamed when complete, so a folder that
-# is there is a finished one.
-function Get-Rpcs3 {
-    if ($script:Rpcs3) { return $script:Rpcs3 }
-    $dir = Join-Path $script:Tools "rpcs3"
-    $exe = Join-Path $dir "rpcs3.exe"
-    if (Test-Path -LiteralPath $exe) { $script:Rpcs3 = $exe; return $exe }
-    Set-Now "Getting a helper tool"; Set-Pct -1
-    try { $rel = Invoke-RestMethod "https://api.github.com/repos/RPCS3/rpcs3-binaries-win/releases/latest" -Headers @{ "User-Agent" = "gt5-pc-installer" } -TimeoutSec 60 }
-    catch { Stop-Install "couldn't reach GitHub to download RPCS3 ($($_.Exception.Message))." }
-    $asset = $rel.assets | Where-Object { $_.name -like "*win64*.7z" } | Select-Object -First 1
-    if (-not $asset) { Stop-Install "couldn't find RPCS3's Windows download." }
-    $sum = $rel.assets | Where-Object { $_.name -eq "$($asset.name).sha256" } | Select-Object -First 1
-    $part = "$dir.part"
-    Remove-Item -LiteralPath $part -Recurse -Force -ErrorAction SilentlyContinue
-    New-Item -ItemType Directory -Force $part | Out-Null
-    $arc = Join-Path $part $asset.name
-    if (-not (Get-Download $asset.browser_download_url $arc ([long]$asset.size) "RPCS3 ($($asset.name))")) {
-        Stop-Install "downloading RPCS3 failed. Check the internet connection and press Try again."
-    }
-    if ($sum) {
-        $want = ((Get-Text $sum.browser_download_url) -split '\s+')[0]
-        if ($want -and ((Get-FileHash -LiteralPath $arc -Algorithm SHA256).Hash -ne $want.ToUpper())) {
-            Remove-Item -LiteralPath $part -Recurse -Force -ErrorAction SilentlyContinue
-            Stop-Install "the RPCS3 download was damaged (checksum). Press Try again."
-        }
-    }
-    Set-Now "Setting up a helper tool"; Set-Pct -1
-    if (-not $env:GT5_INSTALL_NOTAR) { [void](Invoke-Tool "tar.exe" @("-xf", $arc, "-C", $part) -Quiet) }
-    if (-not (Test-Path -LiteralPath (Join-Path $part "rpcs3.exe"))) {
-        # Windows 10's tar can't read this archive (no LZMA): use 7-Zip, or 7-Zip's own small extractor.
-        $sz = @("$env:ProgramFiles\7-Zip\7z.exe", "${env:ProgramFiles(x86)}\7-Zip\7z.exe") | Where-Object { (Test-Path $_) -and -not $env:GT5_INSTALL_NO7Z } | Select-Object -First 1
-        if ($sz) { Say "  unpacking it with your 7-Zip" } else {
-            $sz = Join-Path $script:Tools "7zr.exe"
-            if (-not (Test-Path -LiteralPath $sz)) {
-                Say "  getting 7-Zip's extractor (7zr.exe) from 7-zip.org to unpack it"
-                [void](Get-Download "https://www.7-zip.org/a/7zr.exe" $sz 0 "7-Zip's extractor (7zr.exe)")
-            }
-        }
-        [void](Invoke-Tool $sz @("x", "-y", "-o$part", $arc) -Quiet)
-    }
-    Remove-Item -LiteralPath $arc -ErrorAction SilentlyContinue
-    if (-not (Test-Path -LiteralPath (Join-Path $part "rpcs3.exe"))) {
-        Remove-Item -LiteralPath $part -Recurse -Force -ErrorAction SilentlyContinue
-        Stop-Install "unpacking RPCS3 failed. Install 7-Zip from https://www.7-zip.org and run this again."
-    }
-    # No welcome box, no update check, no pop-ups: it's only used from here.
-    New-Item -ItemType Directory -Force (Join-Path $part "GuiConfigs") | Out-Null
-    $ini = "[main_window]`r`ninfoBoxEnabledWelcome=false`r`ninfoBoxEnabledInstallPUP=false`r`ninfoBoxEnabledInstallPKG=false`r`n[Meta]`r`ncheckUpdateStart=false`r`n"
-    [IO.File]::WriteAllText((Join-Path $part "GuiConfigs\CurrentSettings.ini"), $ini)
-    Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue
-    Move-Item -LiteralPath $part -Destination $dir
-    $script:Rpcs3 = $exe
-    return $exe
-}
-
-# RPCS3 started hidden, with a watcher that hides any window of it the moment it shows (it shows its
-# question boxes, a progress box and, after a firmware install, an empty game window) and presses Yes in
-# its "RPCS3 Firmware Installer" questions through UI Automation. RPCS3 has no way to install firmware
-# without its window ("Cannot perform installation in no-gui mode!"), and a separate desktop doesn't work:
-# UI Automation can't reach it and Qt ignores keys posted to an inactive window.
-function Start-Rpcs3([string]$exe, [string[]]$a) {
-    if (-not ("Gt5Inst.Rpcs3Watch" -as [type])) {
-        Add-Type -ReferencedAssemblies UIAutomationClient, UIAutomationTypes, WindowsBase -TypeDefinition @'
-using System;
-using System.Collections.Generic;
-using System.Runtime.InteropServices;
-using System.Text;
-using System.Threading;
-using System.Windows.Automation;
-namespace Gt5Inst {
-public static class Rpcs3Watch {
-    delegate bool EnumProc(IntPtr h, IntPtr l);
-    [DllImport("user32.dll")] static extern bool EnumWindows(EnumProc f, IntPtr l);
-    [DllImport("user32.dll")] static extern int GetWindowThreadProcessId(IntPtr h, out int pid);
-    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetWindowTextW(IntPtr h, StringBuilder s, int n);
-    [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr h);
-    [DllImport("user32.dll")] static extern bool ShowWindow(IntPtr h, int cmd);
-    static volatile bool stop = true;
-    static int pid;
-    static Thread thread;
-    public static int Pressed;
-    public static readonly List<string> Seen = new List<string>();
-    public static void Start(int processId) {
-        Stop();
-        pid = processId; Pressed = 0; stop = false;
-        lock (Seen) Seen.Clear();
-        thread = new Thread(Loop); thread.IsBackground = true; thread.Start();
-    }
-    public static void Stop() { stop = true; if (thread != null) { thread.Join(2000); thread = null; } }
-    static void Loop() {
-        var yes = new AndCondition(new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Button),
-                                   new PropertyCondition(AutomationElement.NameProperty, "Yes"));
-        var tried = new Dictionary<IntPtr, int>();
-        while (!stop) {
-            var found = new List<IntPtr>();
-            EnumWindows(delegate(IntPtr h, IntPtr l) { int p; GetWindowThreadProcessId(h, out p); if (p == pid) found.Add(h); return true; }, IntPtr.Zero);
-            foreach (var h in found) {
-                if (!IsWindowVisible(h)) continue;
-                ShowWindow(h, 0);
-                var t = new StringBuilder(256); GetWindowTextW(h, t, 256);
-                string title = t.ToString();
-                lock (Seen) Seen.Add(title);
-                int n; tried.TryGetValue(h, out n);
-                if (title == "RPCS3 Firmware Installer" && n < 3) {
-                    tried[h] = n + 1;
-                    try {
-                        var b = AutomationElement.FromHandle(h).FindFirst(TreeScope.Descendants, yes);
-                        if (b != null) { ((InvokePattern)b.GetCurrentPattern(InvokePattern.Pattern)).Invoke(); tried[h] = 9; Interlocked.Increment(ref Pressed); }
-                    } catch { }
-                }
-            }
-            Thread.Sleep(40);
-        }
-    }
-}
-}
-'@
-    }
-    $p = Start-Process -FilePath $exe -ArgumentList $a -WorkingDirectory (Split-Path $exe) -WindowStyle Hidden -PassThru
-    [Gt5Inst.Rpcs3Watch]::Start($p.Id)
-    return $p
-}
-function Stop-Rpcs3Watch { if ("Gt5Inst.Rpcs3Watch" -as [type]) { [Gt5Inst.Rpcs3Watch]::Stop() } }
-
-# RPCS3's firmware install: answer its questions (the file, and the version when one is installed), then
-# wait until all the files are there (1075 for 4.92) and stay that way, then end it.
-function Install-Rpcs3Firmware([string]$rp, [string]$pup) {
-    $flash = Join-Path (Split-Path $rp) "dev_flash"
-    $p = Start-Rpcs3 $rp @("--installfw", "`"$pup`"")
-    $start = [Environment]::TickCount; $last = -1; $stable = 0; $why = ""
-    while ($true) {
-        Start-Sleep -Seconds 2
-        $sec = ([Environment]::TickCount - $start) / 1000
-        if ($p.HasExited) { $why = "RPCS3 closed before it finished"; break }
-        $n = (Get-ChildItem -LiteralPath $flash -Recurse -File -ErrorAction SilentlyContinue | Measure-Object).Count
-        if ($n -gt 0) { Set-Pct ([math]::Min(99, 100.0 * $n / 1075)) "$n system files" }
-        if ($n -ge 1000 -and $n -eq $last) { $stable++ } else { $stable = 0 }
-        $last = $n
-        if ($stable -ge 4) { break }
-        if ([Gt5Inst.Rpcs3Watch]::Pressed -eq 0 -and $sec -gt 120) { $why = "RPCS3 didn't ask to install it"; break }
-        if ($n -eq 0 -and $sec -gt 600) { $why = "RPCS3 didn't start installing it"; break }
-        if ($sec -gt 1800) { $why = "it took more than 30 minutes"; break }
-    }
-    Stop-Rpcs3Watch
-    if (-not $p.HasExited) { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue; [void]$p.WaitForExit(10000) }
-    if ($why) {
-        $seen = @(); try { $seen = @([Gt5Inst.Rpcs3Watch]::Seen | Select-Object -Unique) } catch {}
-        Say "  RPCS3: $why ($last files; its windows: $($seen -join ', '))"
-    }
-    return ($last -ge 1000 -and -not $why)
-}
-
 # =====================================================================================================
 # The install itself
 # =====================================================================================================
 function Invoke-Install {
     $pickGame = "$env:GT5_INSTALL_GAME".Trim('"', ' ')
-    $pickFw = "$env:GT5_INSTALL_FIRMWARE".Trim('"', ' ')
     # Before anything long: a PC that can't run the game is told so (the window has already said it and offered no
     # Install; this is the console's way, and a safety net).
     $pcProblem = Get-PcProblem
@@ -980,7 +762,6 @@ function Invoke-Install {
         New-Item -Path $RegKey -Force | Out-Null
         Set-ItemProperty -Path $RegKey -Name Dest -Value $base
         if ($pickGame) { Set-ItemProperty -Path $RegKey -Name Game -Value $pickGame }
-        if ($pickFw) { Set-ItemProperty -Path $RegKey -Name Firmware -Value $pickFw }
     } catch {}
     Say "Installing to $base"
     if ($game.Text) { Say "Game: $($game.Text)" }
@@ -1152,19 +933,8 @@ function Invoke-Install {
     if (-not $useVs) { $env:GT5_TOOLCHAIN = $tc }
     Step-End "done" "Ready"
 
-    # ---- 4. PS3 system software ---------------------------------------------------------------------------
-    $needFw = -not (Test-Path -LiteralPath (Join-Path $gt5 "dev_flash\sys\external")) -or (Test-Mark $base "firmware-partial")
-    Step-Start 4 "A few seconds to a few minutes, once."
-    if (-not $needFw) { Step-End "skip" "Done" } else {
-        if ((Test-Pup $pickFw) -ne "ok") { Stop-Install "choose PS3UPDAT.PUP (Sony's PS3 system software file) in the installer window." }
-        Set-Mark $base "firmware-partial"
-        if (-not (Unlock-Firmware $pickFw (Join-Path $gt5 "dev_flash"))) { Stop-Install "installing the PS3 system software didn't finish (see Details). Press Try again." }
-        Clear-Mark $base "firmware-partial"
-        Step-End "done" "Done"
-    }
-
-    # ---- 5. The game files ------------------------------------------------------------------------------
-    Step-Start 5 "A few minutes, once (about 17 GB)."
+    # ---- 4. The game files ------------------------------------------------------------------------------
+    Step-Start 4 "A few minutes, once (about 17 GB)."
     $vfsGame = Join-Path $gt5 "vfs\PS3_GAME"
     if ($game.Ok) {
         $src = $null
@@ -1201,10 +971,10 @@ function Invoke-Install {
     elseif (Test-Mark $base "game-partial") { Stop-Install "copying your game files didn't finish last time: choose your GT5 game (its folder or .iso) in the installer window so the copy can be completed." }
     else { Stop-Install "choose your GT5 game (its folder or .iso) in the installer window." }
 
-    # ---- 6. Unlock EBOOT.BIN ------------------------------------------------------------------------------
+    # ---- 5. Unlock EBOOT.BIN ------------------------------------------------------------------------------
     $elf = Join-Path $gt5 "input\EBOOT.elf"
     $needElf = -not (Test-Path -LiteralPath $elf) -or [bool]$game.Ok
-    Step-Start 6 "Under a minute."
+    Step-Start 5 "Under a minute."
     if (-not $needElf) { Step-End "skip" "Done" } else {
         $bin = Join-Path $vfsGame "USRDIR\EBOOT.BIN"
         New-Item -ItemType Directory -Force (Split-Path $elf) | Out-Null
@@ -1218,8 +988,8 @@ function Invoke-Install {
         Step-End "done" "Done"
     }
 
-    # ---- 7 and 8. Game code and build: setup.ps1 ----------------------------------------------------------
-    Step-Start 7 "About 10 minutes."
+    # ---- 6 and 7. Game code and build: setup.ps1 ----------------------------------------------------------
+    Step-Start 6 "About 10 minutes."
     Set-Now "Checking everything is in place" "About 10 minutes."; Set-Pct -1
     Remove-GitLocks $base 10
     # Code generation: relift.ps1's phases ("== name") and how much of the time each takes.
@@ -1256,7 +1026,7 @@ function Invoke-Install {
         elseif ($t -match '^The game code is already generated and current') { $sp.End7 = $true; Step-End "skip" "Done" }
         elseif ($t -match '^Building gt5\.exe') {
             if (-not $sp.End7) { $sp.End7 = $true; Step-End "done" "Done" }
-            Step-Start 8 "20 to 50 minutes the first time."
+            Step-Start 7 "20 to 50 minutes the first time."
             Set-Now "Building the game" "20 to 50 minutes the first time."; Set-Pct -1
         }
         elseif ($t -match '^\[(\d+)/(\d+)\]') {
@@ -1446,7 +1216,7 @@ function Show-Page([string]$name) {
     foreach ($k in @($U.Pages.Keys)) { $U.Pages[$k].Visible = ($k -eq $name) }
     $U.Page = $name
     $U.Sub.Text = switch ($name) {
-        "pick" { "Builds the PC version from your own copy of the game. Choose the three things below and press Install." }
+        "pick" { "Builds the PC version from your own copy of the game. Choose the two things below and press Install." }
         "work" { if ($U.Mode -eq "run") { "Installing. You can keep using your PC." } else { $U.Sub.Text } }
         "fin"  { "Finished." }
     }
@@ -1481,13 +1251,11 @@ function Build-PickPage($pg) {
         return @{ Box = $tb; Status = $st; Y = $y + 45 }
     }
     $rg = New-Row 14  "1.  Your Gran Turismo 5 game" "Your disc dump: its folder (the one with PS3_GAME in it) or an .iso file. Europe or US."
-    $rf = New-Row 118 "2.  PS3 system software (PS3UPDAT.PUP)" "Sony's free PS3 update file. The game needs some PS3 system files from it."
-    $rd = New-Row 222 "3.  Install to" "A new or empty folder. About $NeedGB GB of space."
-    $U.Rg = $rg; $U.Rf = $rf; $U.Rd = $rd
+    $rd = New-Row 118 "2.  Install to" "A new or empty folder. About $NeedGB GB of space."
+    $U.Rg = $rg; $U.Rd = $rd
     $bgF = New-Btn $pg "Folder..." 502 $rg.Y 110; $bgI = New-Btn $pg "ISO file..." 620 $rg.Y 118
-    $bfB = New-Btn $pg "Browse..." 502 $rf.Y 110; $bfS = New-Btn $pg "Get it from Sony" 620 $rf.Y 118
     $bdB = New-Btn $pg "Browse..." 502 $rd.Y 110
-    $note = New-Ctl "Label" $pg 22 326 716 40; $note.ForeColor = $U.Dim
+    $note = New-Ctl "Label" $pg 22 222 716 40; $note.ForeColor = $U.Dim
     $note.Text = "Takes about an hour the first time. Everything goes into the install folder. Nothing from your game is uploaded or shared."
     # This PC can't run the game (no AVX2, too little memory): that line instead, and no Install. Asked once.
     $U.PcProblem = Get-PcProblem
@@ -1495,7 +1263,7 @@ function Build-PickPage($pg) {
     if ($U.PcProblem) { $note.Text = $U.PcProblem; $note.ForeColor = $U.Bad; $note.Font = $U.Bold }
     # The licences of the parts it downloads, when there are any: one line, the names are links. Pressing
     # Install is the acceptance (Get-LicenceParts; set again by $U.Check, as it depends on the folder).
-    $U.Lic = New-Ctl "LinkLabel" $pg 22 368 716 20; $U.Lic.ForeColor = $U.Dim; $U.Lic.Font = $U.Small
+    $U.Lic = New-Ctl "LinkLabel" $pg 22 264 716 20; $U.Lic.ForeColor = $U.Dim; $U.Lic.Font = $U.Small
     $U.Lic.LinkBehavior = "HoverUnderline"
     $U.Lic.Add_LinkClicked({ param($s, $e) try { Start-Process ([string]$e.Link.LinkData) } catch {} })
     $U.LicParts = @()
@@ -1505,20 +1273,13 @@ function Build-PickPage($pg) {
     $cancel = New-Btn $pg "Cancel" 638 392 100
     $U.Form.AcceptButton = $U.Go
 
-    # Saved choices from the last run, else a PS3UPDAT.PUP in Downloads, and the usual folder.
+    # Saved choices from the last run, and the usual folder.
     $saved = @{}
-    try { $k = Get-ItemProperty -Path $RegKey -ErrorAction Stop; foreach ($n in "Game", "Firmware", "Dest") { $saved[$n] = $k.$n } } catch {}
-    $fw0 = $saved.Firmware
-    if (-not $fw0) {
-        $fw0 = Get-ChildItem (Join-Path $env:USERPROFILE "Downloads") -Filter "PS3UPDAT.PUP" -Recurse -Depth 2 -ErrorAction SilentlyContinue |
-            Select-Object -First 1 -ExpandProperty FullName
-    }
-    # A remembered game or firmware file that isn't there any more (deleted, or on a drive not plugged in) isn't filled
-    # in: an install that already has them needs neither, and a red "isn't there" would only stop Install.
+    try { $k = Get-ItemProperty -Path $RegKey -ErrorAction Stop; foreach ($n in "Game", "Dest") { $saved[$n] = $k.$n } } catch {}
+    # A remembered game that isn't there any more (deleted, or on a drive not plugged in) isn't filled
+    # in: an install that already has it doesn't need it, and a red "isn't there" would only stop Install.
     if ($saved.Game -and -not (Test-Path -LiteralPath $saved.Game)) { Write-UiLog "The game remembered from last time isn't there now: $($saved.Game)"; $saved.Game = $null }
-    if ($fw0 -and -not (Test-Path -LiteralPath $fw0)) { Write-UiLog "The firmware file remembered from last time isn't there now: $fw0"; $fw0 = $null }
     $rg.Box.Text = if ($env:GT5_INSTALL_GAME) { $env:GT5_INSTALL_GAME } else { $saved.Game }
-    $rf.Box.Text = if ($env:GT5_INSTALL_FIRMWARE) { $env:GT5_INSTALL_FIRMWARE } else { $fw0 }
     $rd.Box.Text = if ($env:GT5_INSTALL_DEST) { $env:GT5_INSTALL_DEST } elseif ($saved.Dest) { $saved.Dest } else { "C:\Games\GT5-PC" }
 
     $U.Check = {
@@ -1527,7 +1288,7 @@ function Build-PickPage($pg) {
         $U.Rd.Status.Text = $d.Text; $U.Rd.Status.ForeColor = $(if ($d.Ok) { $U.Ok } else { $U.Bad })
         $gp = $U.Rg.Box.Text.Trim('"', ' ')
         # Already in the install folder: a path that isn't there now (the .iso was deleted after the first install)
-        # counts as nothing chosen. The game and firmware are only needed when the folder lacks them.
+        # counts as nothing chosen. The game is only needed when the folder lacks it.
         $gpGone = $gp -and -not (Test-Path -LiteralPath $gp) -and $d.Ok -and $d.HasGame
         if ($gpGone) { $gp = "" }
         if ($gp -ne $U.GamePick) { $U.GamePick = $gp; $U.Form.Cursor = "WaitCursor"; $U.Game = Get-GameInfo $gp; $U.Form.Cursor = "Default" }
@@ -1536,19 +1297,9 @@ function Build-PickPage($pg) {
         elseif ($g -and $g.Text) { $U.Rg.Status.Text = $g.Text; $U.Rg.Status.ForeColor = $U.Bad }
         elseif ($d.Ok -and $d.HasGame) { $U.Rg.Status.Text = "Not needed: the game is already in the install folder."; $U.Rg.Status.ForeColor = $U.Ok }
         else { $U.Rg.Status.Text = "" }
-        $fp = $U.Rf.Box.Text.Trim('"', ' ')
-        $fpGone = $fp -and -not (Test-Path -LiteralPath $fp) -and $d.Ok -and $d.HasFw
-        if ($fpGone) { $fp = "" }
-        $p = Test-Pup $fp
-        $fwOk = ($p -eq "ok")
-        if ($fwOk) { $U.Rf.Status.Text = "Found: PS3 system software"; $U.Rf.Status.ForeColor = $U.Ok }
-        elseif ($p) { $U.Rf.Status.Text = $p; $U.Rf.Status.ForeColor = $U.Bad }
-        elseif ($d.Ok -and $d.HasFw) { $U.Rf.Status.Text = "Not needed: already installed in the install folder."; $U.Rf.Status.ForeColor = $U.Ok }
-        else { $U.Rf.Status.Text = "" }
         $gameReady = ($g -and $g.Ok) -or ((-not $gp) -and $d.Ok -and $d.HasGame)
-        $fwReady = $fwOk -or ((-not $fp) -and $d.Ok -and $d.HasFw)
-        $U.Go.Enabled = [bool]($d.Ok -and $gameReady -and $fwReady -and -not $U.PcProblem)
-        $U.GameArg = $gp; $U.FwArg = $fp   # what Install passes on (a path that's gone and not needed: nothing)
+        $U.Go.Enabled = [bool]($d.Ok -and $gameReady -and -not $U.PcProblem)
+        $U.GameArg = $gp   # what Install passes on (a path that's gone and not needed: nothing)
         # The licence line: only the parts this install will download.
         $U.LicParts = Get-LicenceParts $(if ($d.Ok) { $d.Full } else { "" }) $U.VsOk $U.Rtx
         $line = Get-LicenceLine $U.LicParts
@@ -1558,14 +1309,11 @@ function Build-PickPage($pg) {
         }
         $U.Lic.Visible = [bool]$line
     }
-    foreach ($r in @($rg, $rf, $rd)) { $r.Box.Add_Leave({ try { & $script:U.Check } catch {} }) }
+    foreach ($r in @($rg, $rd)) { $r.Box.Add_Leave({ try { & $script:U.Check } catch {} }) }
     $bgF.Add_Click({ $dlg = New-Object Windows.Forms.FolderBrowserDialog; $dlg.Description = "Choose your GT5 disc dump (the folder with PS3_GAME in it)"
                      if ($dlg.ShowDialog($script:U.Form) -eq "OK") { $script:U.Rg.Box.Text = $dlg.SelectedPath; & $script:U.Check } })
     $bgI.Add_Click({ $dlg = New-Object Windows.Forms.OpenFileDialog; $dlg.Filter = "Disc image (*.iso)|*.iso"; $dlg.Title = "Choose your GT5 .iso"
                      if ($dlg.ShowDialog($script:U.Form) -eq "OK") { $script:U.Rg.Box.Text = $dlg.FileName; & $script:U.Check } })
-    $bfB.Add_Click({ $dlg = New-Object Windows.Forms.OpenFileDialog; $dlg.Filter = "PS3 system software (PS3UPDAT.PUP)|*.PUP"; $dlg.Title = "Choose PS3UPDAT.PUP"
-                     if ($dlg.ShowDialog($script:U.Form) -eq "OK") { $script:U.Rf.Box.Text = $dlg.FileName; & $script:U.Check } })
-    $bfS.Add_Click({ Start-Process $SonyPage })
     $bdB.Add_Click({ $dlg = New-Object Windows.Forms.FolderBrowserDialog; $dlg.Description = "Choose where to install (a new folder is made inside if this one isn't empty)"
                      if ($dlg.ShowDialog($script:U.Form) -eq "OK") {
                          $p = $dlg.SelectedPath
@@ -1579,7 +1327,7 @@ function Start-Install {
     $U = $script:U
     & $U.Check
     if (-not $U.Go.Enabled) { return }
-    $U.Choice = @{ Game = $U.GameArg; Firmware = $U.FwArg; Dest = $U.Rd.Box.Text.Trim('"', ' ') }
+    $U.Choice = @{ Game = $U.GameArg; Dest = $U.Rd.Box.Text.Trim('"', ' ') }
     # Pressing Install with the licence line shown accepts the parts it names.
     $U.Accepted = if ($U.LicParts.Count -gt 0) { (@($U.LicParts | ForEach-Object { $_.Id }) -join ",") } else { "none" }
     Write-UiLog "Install pressed. $(if ($U.Lic.Visible) { "Licence line shown: $($U.Lic.Text) ($((@($U.LicParts | ForEach-Object { $_.Url })) -join ', '))" } else { 'No licence line (nothing it downloads needs one).' })"
@@ -1776,10 +1524,10 @@ function Start-Engine {
     $psi.RedirectStandardInput = $true; $psi.RedirectStandardOutput = $true; $psi.RedirectStandardError = $true
     $psi.StandardOutputEncoding = $Utf8; $psi.StandardErrorEncoding = $Utf8
     $psi.EnvironmentVariables["GT5_INSTALLER_ROLE"] = "engine"
-    foreach ($kv in @(@("GT5_INSTALL_GAME", $U.Choice.Game), @("GT5_INSTALL_FIRMWARE", $U.Choice.Firmware), @("GT5_INSTALL_DEST", $U.Choice.Dest), @("GT5_INSTALL_ACCEPTED", $U.Accepted))) {
+    foreach ($kv in @(@("GT5_INSTALL_GAME", $U.Choice.Game), @("GT5_INSTALL_DEST", $U.Choice.Dest), @("GT5_INSTALL_ACCEPTED", $U.Accepted))) {
         if ($kv[1]) { $psi.EnvironmentVariables[$kv[0]] = $kv[1] } elseif ($psi.EnvironmentVariables.ContainsKey($kv[0])) { $psi.EnvironmentVariables.Remove($kv[0]) }
     }
-    Write-UiLog ""; Write-UiLog "---- Install started $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss'): game '$($U.Choice.Game)', firmware '$($U.Choice.Firmware)', folder '$($U.Choice.Dest)'"
+    Write-UiLog ""; Write-UiLog "---- Install started $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss'): game '$($U.Choice.Game)', folder '$($U.Choice.Dest)'"
     Add-Detail "Installing to $($U.Choice.Dest)"
     try { $U.Proc = [Diagnostics.Process]::Start($psi) }
     catch { $U.Proc = $null; Show-Failed "The installer couldn't start its work ($($_.Exception.Message))."; return }
@@ -1796,7 +1544,7 @@ function Restart-Install {
     elseif ($U.Dest) { Show-Failed $U.Dest.Text; return }
     Start-Engine
 }
-# Stops the engine and everything it started (git, Python, the compiler, RPCS3), then tidies what a cut
+# Stops the engine and everything it started (git, Python, the compiler), then tidies what a cut
 # could leave behind: a mounted .iso, git's lock files.
 function Stop-Engine {
     $U = $script:U

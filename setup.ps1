@@ -226,19 +226,40 @@ foreach ($d in "input", "vfs") { New-Item -ItemType Directory -Force (Join-Path 
 
 $elf = Join-Path $gt5 "input\EBOOT.elf"
 $elfDisc = $false   # the disc's own version 01.00 executable (no update)
-if (-not (Test-Path $elf)) {
-    if (Test-Path (Join-Path $gt5 "input\EBOOT.BIN")) {
-        Todo "GT5\input\EBOOT.elf" "You have EBOOT.BIN there, but the tools need the DECRYPTED file: in RPCS3, Utilities > Decrypt PS3 Binaries, pick EBOOT.BIN, and put the result in GT5\input named EBOOT.elf."
-    } else {
-        Todo "GT5\input\EBOOT.elf (your decrypted game executable)" "In RPCS3, Utilities > Decrypt PS3 Binaries, pick your disc's PS3_GAME\USRDIR\EBOOT.BIN, and put the result in GT5\input named EBOOT.elf."
+# The game's executable is locked as it comes on the disc (EBOOT.BIN). The port's own tool unlocks it
+# (scripts\ps3_unlock.py: no RPCS3): from GT5\input\EBOOT.BIN, a locked file named EBOOT.elf, or the disc
+# copy's own PS3_GAME\USRDIR\EBOOT.BIN.
+function Unlock-Exe([string]$from) {
+    $tool = Join-Path $gt5 "scripts\ps3_unlock.py"
+    if (-not (Test-Path -LiteralPath $tool) -or -not (Test-Path -LiteralPath $py)) { return "this copy lacks the unlock tool" }
+    $why = ""; $tmp = "$elf.unlock"
+    Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
+    & $py -I $tool eboot $from $tmp --keys-dir (Join-Path $base "tools\ps3_keys") 2>&1 | ForEach-Object {
+        if ("$_" -match '^PS3_UNLOCK_FAIL\s+\d+\s+\w+:\s*(.*)$') { $why = $Matches[1].Trim() }
     }
+    $global:LASTEXITCODE = 0
+    if (Test-Path -LiteralPath $tmp) { Move-Item -LiteralPath $tmp -Destination $elf -Force; return "" }
+    return $(if ($why) { $why } else { "it didn't work" })
+}
+$locked = $null
+if (Test-Path $elf) {
+    $fs = [IO.File]::OpenRead($elf); $magic = New-Object byte[] 4; [void]$fs.Read($magic, 0, 4); $fs.Close()
+    if (($magic -join ",") -eq "83,67,69,0") { $locked = "$elf.locked"; Move-Item -LiteralPath $elf -Destination $locked -Force }
+} else {
+    $locked = @((Join-Path $gt5 "input\EBOOT.BIN"), (Join-Path $gt5 "vfs\PS3_GAME\USRDIR\EBOOT.BIN")) | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+}
+if ($locked -and -not (Test-Path $elf)) {
+    $u = Unlock-Exe $locked
+    if ($u) { Write-Host "  [note]    Unlocking the game's executable ($locked): $u" -ForegroundColor Yellow }
+    else { Ok "GT5\input\EBOOT.elf: unlocked from $locked" }
+}
+if (-not (Test-Path $elf)) {
+    Todo "GT5\input\EBOOT.elf (your game's executable)" "Copy your disc's PS3_GAME folder to GT5\vfs (so that GT5\vfs\PS3_GAME\USRDIR\EBOOT.BIN exists) and run setup again: it unlocks the executable by itself."
 } else {
     $fs = [IO.File]::OpenRead($elf); $magic = New-Object byte[] 4; [void]$fs.Read($magic, 0, 4); $fs.Close()
     $sha1 = (Get-FileHash $elf -Algorithm SHA1).Hash
-    if (($magic -join ",") -eq "83,67,69,0") {
-        Todo "a decrypted GT5\input\EBOOT.elf" "This file is still encrypted (it's EBOOT.BIN renamed). Decrypt it in RPCS3: Utilities > Decrypt PS3 Binaries."
-    } elseif (($magic -join ",") -ne "127,69,76,70") {
-        Todo "a valid GT5\input\EBOOT.elf" "This file isn't a PS3 executable. Decrypt your disc's PS3_GAME\USRDIR\EBOOT.BIN in RPCS3 and use the result."
+    if (($magic -join ",") -ne "127,69,76,70") {
+        Todo "a valid GT5\input\EBOOT.elf" "This file isn't a PS3 executable. Delete it and run setup again: it is made from your disc's PS3_GAME\USRDIR\EBOOT.BIN."
     } elseif ($sha1 -eq "1535B865EC7DD58E7704B378B8621532ECF844E1") {
         Ok "GT5\input\EBOOT.elf: Europe BCES00569, version 01.00 (the tested one)"; $elfDisc = $true
     } elseif ($sha1 -eq "40126D2D14B0A95B9601BB11E3A6E778186067AC") {
@@ -264,8 +285,8 @@ if (-not (Test-Path $elf)) {
 # which call code it doesn't have: the game stops before the main menu with a black screen (13 Nov 2026,
 # US 2.11 with the Master Mod). The update's PARAM.SFO (APP_VER) or EBOOT.BIN in GT5\hdd0\game\<title ID>
 # says an update is installed; the disc version writes neither there.
-# scripts\update_exe.ps1 finds the update's EBOOT.BIN (GT5\hdd0, or RPCS3's dev_hdd0), unlocks it with
-# RPCS3 and swaps it in, keeping the disc's as EBOOT.disc-01.00.elf; the game code is then generated for it.
+# scripts\update_exe.ps1 finds the update's EBOOT.BIN (GT5\hdd0), unlocks it with the port's own tool and
+# swaps it in, keeping the disc's as EBOOT.disc-01.00.elf; the game code is then generated for it.
 if ($elfDisc) {
     & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $gt5 "scripts\update_exe.ps1") -Gt5 $gt5
     if ($LASTEXITCODE -eq 2) { Todo "GT5\input\EBOOT.elf from the game update in GT5\hdd0" "See the lines just above." }
@@ -293,10 +314,8 @@ if (Test-Path (Join-Path $game "USRDIR")) {
     else { Todo "GT5\vfs\PS3_GAME (your disc's game data, about 17 GB)" "Copy the PS3_GAME folder from your disc dump to GT5\vfs, so that GT5\vfs\PS3_GAME\USRDIR exists." }
 }
 
-$flash = Join-Path $gt5 "dev_flash"
-if (Test-Path (Join-Path $flash "sys")) { Ok "GT5\dev_flash (PS3 system software)" }
-elseif (Test-Path (Join-Path $flash "dev_flash\sys")) { Todo "GT5\dev_flash at the right level" "It's one folder too deep: move the contents of GT5\dev_flash\dev_flash up into GT5\dev_flash." }
-else { Todo "GT5\dev_flash (PS3 system software)" "In RPCS3, File > Install Firmware with Sony's PS3UPDAT.PUP, then copy RPCS3's dev_flash folder to GT5\dev_flash (it contains sys, vsh, data...)." }
+# The PS3's system software (GT5\dev_flash) is not needed: the game never reads it, and every system
+# function it calls is the port's own code. A folder left by an older install does no harm.
 
 Write-Host ""
 if ($script:todo -gt 0) {

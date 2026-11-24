@@ -3,13 +3,13 @@
 #   powershell -ExecutionPolicy Bypass -File GT5\scripts\game_version.ps1 -To 2.11 [-Gt5 <GT5 folder>]
 #   powershell -ExecutionPolicy Bypass -File GT5\scripts\game_version.ps1 -Show
 #
-# The updates come from Sony's own update server, the same packages a PS3 or RPCS3 gets. gt5_updates.txt beside
+# The updates come from Sony's own update server, the same packages a PS3 gets. gt5_updates.txt beside
 # this script pins each one (address, size and SHA-1, as Sony's update list gives them, read 23 Nov 2026): a
 # download is used only when it is exactly that file, so the plain-HTTP address can't be used to slip anything
 # else in. They're kept in <install>\downloads\game-updates and used again for the next change.
 #
-#   newer than now: the missing updates are downloaded and installed by install_pkg.ps1 (through the install's
-#                   own RPCS3, tools\rpcs3, never one of yours), then the game is converted and built again.
+#   newer than now: the missing updates are downloaded and installed by install_pkg.ps1 (the port's own
+#                   unpacker; no RPCS3), then the game is converted and built again.
 #   older than now: the updates up to the one chosen are installed again from 1.05 on.
 #   1.00:           the update data goes and the disc's executable comes back.
 # Either way the installed update data (GT5\hdd0\game\<title ID>) and executable are set aside first, deleted once
@@ -189,21 +189,10 @@ foreach ($r in $need) {
 }
 if ($need) { Say "  all $($need.Count) update package(s) are here and checked" Green }
 
-# ---- The install's own RPCS3 (install_pkg.ps1 installs through it; it fetches it into tools\rpcs3 if missing)
-$emuExe = Join-Path $base "tools\rpcs3\rpcs3.exe"
-function Emu-Hdd {
-    $emu = Split-Path $emuExe -Parent
-    $hdd = Join-Path $emu "dev_hdd0"
-    $vfs = Join-Path $emu "config\vfs.yml"
-    if (Test-Path $vfs) {
-        $line = Get-Content $vfs -ErrorAction SilentlyContinue | Where-Object { $_ -match '^\s*/dev_hdd0/\s*:' } | Select-Object -First 1
-        if ($line) {
-            $q = ($line -replace '^\s*/dev_hdd0/\s*:\s*', '').Trim().Trim('"').Replace('$(EmulatorDir)', "$emu\")
-            if ($q) { $hdd = $q.TrimEnd('/', '\') }
-        }
-    }
-    return $hdd
-}
+# ---- The port's own unlock tool (install_pkg.ps1 unpacks the packages with it too) -------------------------
+$tool = Join-Path $PSScriptRoot "ps3_unlock.py"
+$py = @((Join-Path $base "tools\python\python.exe"), (Join-Path $base "venv\Scripts\python.exe")) | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+if (-not $py) { $c = Get-Command python.exe -ErrorAction SilentlyContinue; if ($c) { $py = $c.Source } }
 
 # ---- The disc's executable back in GT5\input (update_exe.ps1 then switches to the new update's) ----------
 $elf = Join-Path $Gt5 "input\EBOOT.elf"
@@ -212,18 +201,14 @@ $discSha = @("1535B865EC7DD58E7704B378B8621532ECF844E1", "40126D2D14B0A95B9601BB
 function Restore-Disc-Exe {
     if ((Test-Path $elf) -and ($discSha -contains (Get-FileHash $elf -Algorithm SHA1).Hash)) { return $true }
     if (Test-Path $discElf) { Copy-Item -LiteralPath $discElf -Destination $elf -Force; Say "  GT5\input\EBOOT.elf is the disc's again"; return $true }
-    # Never kept (an install that started from an update's executable): unlock the disc's own with RPCS3.
+    # Never kept (an install that started from an update's executable): unlock the disc's own again.
     $bin = Join-Path $Gt5 "vfs\PS3_GAME\USRDIR\EBOOT.BIN"
-    if (-not (Test-Path $emuExe) -or -not (Test-Path $bin)) { return $false }
-    $work = Join-Path $Gt5 "input\decrypt_disc"
-    Remove-Item -Recurse -Force $work -ErrorAction SilentlyContinue; New-Item -ItemType Directory -Force $work | Out-Null
-    Copy-Item -LiteralPath $bin (Join-Path $work "EBOOT.BIN")
-    $p = Start-Process -FilePath $emuExe -ArgumentList @("--no-gui", "--decrypt", "`"$(Join-Path $work 'EBOOT.BIN')`"") -PassThru -WindowStyle Hidden
-    if (-not $p.WaitForExit(300000)) { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue }
-    $out = Join-Path $work "EBOOT.elf"
-    $ok = (Test-Path $out) -and ([IO.File]::ReadAllBytes($out)[0] -eq 0x7F)
+    if (-not $py -or -not (Test-Path -LiteralPath $tool) -or -not (Test-Path $bin)) { return $false }
+    $out = Join-Path $Gt5 "input\EBOOT.disc.tmp.elf"
+    & $py -I $tool eboot $bin $out --keys-dir (Join-Path $base "tools\ps3_keys") 2>&1 | Out-Null
+    $ok = (Test-Path $out) -and ($discSha -contains (Get-FileHash $out -Algorithm SHA1).Hash)
     if ($ok) { Copy-Item $out $discElf -Force; Move-Item $out $elf -Force; Say "  GT5\input\EBOOT.elf is the disc's again (unlocked from the disc)" }
-    Remove-Item -Recurse -Force $work -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $out -Force -ErrorAction SilentlyContinue
     return $ok
 }
 
@@ -259,34 +244,18 @@ if ($want -eq "01.00") {
     exit 0
 }
 
-# RPCS3's own copy of the game must be at the version the installs start from: it refuses an update whose
-# predecessor it doesn't have, and skips any it has.
+# Going on from an installed update: its data goes back in place as a copy (the one set aside stays until the
+# change has worked) and the newer updates go on top of it. Going back, or from the disc's 1.00: the updates
+# are installed from 1.05 on into an empty folder.
 $from = if ($older -or $cur -eq "01.00") { "" } else { $cur }
-if ($from -and -not (Test-Path $emuExe)) {
-    # No RPCS3 of its own yet: install_pkg.ps1 fetches it into tools\rpcs3 (and stops there), so it can be given
-    # the installed data first.
-    $env:GT5_PKG_NO_SEARCH = "1"; $env:GT5_PKG_NOPAUSE = "1"; $env:GT5_PKG_FIND_ONLY = "1"
-    & powershell -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot "install_pkg.ps1") @files -Gt5 $Gt5
-    Remove-Item Env:\GT5_PKG_FIND_ONLY -ErrorAction SilentlyContinue
-    if (-not (Test-Path $emuExe)) { Undo "RPCS3 couldn't be fetched into tools\rpcs3 (see above)." }
-}
-$hdd = Emu-Hdd
-$emuGame = Join-Path $hdd "game\$title"
-$ev = Read-Sfo (Join-Path $emuGame "PARAM.SFO")
-$ev = if ($ev -and $ev["APP_VER"]) { Norm-Ver ([string]$ev["APP_VER"]) } else { "" }
-if ($ev -ne $from) {
-    if (Test-Path $emuGame) { Remove-Item -LiteralPath $emuGame -Recurse -Force -ErrorAction SilentlyContinue }
-    if ($from) {
-        # It has another version (or none): it gets a copy of the installed update data to go on from.
-        Say "  tools\rpcs3 gets update $(Show-Ver $from)'s data to go on from"
-        robocopy $aside $emuGame /E /NFL /NDL /NJH /NJS /NP | Out-Null
-        if ($LASTEXITCODE -ge 8) { Undo "Copying the update data to tools\rpcs3 failed (robocopy code $LASTEXITCODE)." }
-    }
+if ($from) {
+    Say "  update $(Show-Ver $from)'s data stays as the start"
+    robocopy $aside $gameDir /E /NFL /NDL /NJH /NJS /NP | Out-Null
+    if ($LASTEXITCODE -ge 8) { Undo "Copying the update data back failed (robocopy code $LASTEXITCODE)." }
 }
 
-# ---- Install them (install_pkg.ps1: RPCS3, then GT5\hdd0, then the update's executable) --------------------
+# ---- Install them (install_pkg.ps1: unpacked into GT5\hdd0, then the update's executable) -----------------
 Say "== Installing $($files.Count) update package(s)" White
-$env:GT5_PKG_NO_SEARCH = "1"   # the install's own RPCS3 (tools\rpcs3), fetched there if it isn't yet
 $env:GT5_PKG_NOPAUSE = "1"
 & powershell -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot "install_pkg.ps1") @files -Gt5 $Gt5
 $code = $LASTEXITCODE

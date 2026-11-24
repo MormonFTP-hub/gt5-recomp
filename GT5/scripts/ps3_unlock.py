@@ -3,10 +3,18 @@
 
     python ps3_unlock.py eboot    <EBOOT.BIN>     <out.elf>           a game's executable (disc or update)
     python ps3_unlock.py firmware <PS3UPDAT.PUP>  <dev_flash folder>  Sony's firmware file, as RPCS3 installs it
+    python ps3_unlock.py pkg      <file.pkg>      <hdd0\\game folder>  a game update or DLC package, into
+                                                                      <that folder>\\<title ID>, as a PS3 installs it
     python ps3_unlock.py keys                                         only fetch + check the keys
 
 An EBOOT.BIN that is already a plain ELF is copied as it is. Free-licence NPDRM executables (game
 updates) are handled; ones that need a licence file (.rap) and system modules (.sprx) are not.
+
+pkg: retail PS3 packages. The package's own checksum is checked before anything is written. A file that
+is there already is replaced only where the package says so. An update is skipped when that version (or
+a newer one) is installed, and refused when the version it goes on top of is not: updates go in order.
+--info prints the package's line (content, folder, versions) and writes nothing. Progress is printed as
+"PKG_PROGRESS <done> <total>" about once a second.
 
 Options (before or after the command):
     --keys-dir DIR   where the fetched key source files are kept (default: ./ps3_keys next to this file,
@@ -668,18 +676,251 @@ def install_firmware(pup_path, dest, keys, aes, log=print):
 
 
 # --------------------------------------------------------------------------------------------------
+# --------------------------------------------------------------------------------------------------
+# Package (.pkg) -> the game's folder on the hard disk (psdevwiki "PKG files": header, metadata
+# packets, item table). Retail PS3 packages only: the data area is AES-128-CTR, the key a fixed one,
+# the counter the header's 16 bytes plus the 16-byte block number.
+# --------------------------------------------------------------------------------------------------
+_LOW16 = None
+
+
+def _counter_blocks(c0, n):
+    """n consecutive 16-byte big-endian counters from c0, built 65,536 at a time by one join."""
+    global _LOW16
+    if _LOW16 is None:
+        _LOW16 = [i.to_bytes(2, "big") for i in range(65536)]
+    out = []
+    while n > 0:
+        low = c0 & 0xFFFF
+        run = min(n, 65536 - low)
+        pre = ((c0 >> 16) & ((1 << 112) - 1)).to_bytes(14, "big")
+        out.append(pre + pre.join(_LOW16[low:low + run]))
+        c0 = (c0 + run) & ((1 << 128) - 1)
+        n -= run
+    return b"".join(out)
+
+
+def read_sfo(blob):
+    """PARAM.SFO -> {key: text or int}; {} when it is not one."""
+    out = {}
+    if len(blob) < 20 or blob[1:4] != b"PSF":
+        return out
+    key_t, data_t, n = struct.unpack_from("<III", blob, 8)
+    for i in range(n):
+        e = 20 + i * 16
+        if e + 16 > len(blob):
+            break
+        ko, fmt, ln, _mx, do = struct.unpack_from("<HHIII", blob, e)
+        end = blob.find(b"\0", key_t + ko)
+        key = blob[key_t + ko:end].decode("ascii", "replace")
+        if data_t + do + ln > len(blob):
+            continue
+        raw = blob[data_t + do:data_t + do + ln]
+        out[key] = struct.unpack_from("<I", raw)[0] if fmt == 0x0404 and ln >= 4 else raw.split(b"\0")[0].decode("utf-8", "replace")
+    return out
+
+
+def _ver(s):
+    """'02.11' -> 2.11; None when it is no version."""
+    m = re.match(r"^\s*(\d{1,2})\.(\d{2})\s*$", s or "")
+    return int(m.group(1)) + int(m.group(2)) / 100.0 if m else None
+
+
+class Package:
+    def __init__(self, path, keys, aes):
+        self.path, self.aes = path, aes
+        try:
+            self.f = open(path, "rb")
+            self.size = os.path.getsize(path)
+            h = self.f.read(0xC0)
+        except OSError as e:
+            raise input_fail(f"cannot read {path}: {e}")
+        if len(h) < 0xC0 or h[:4] != b"\x7fPKG":
+            raise input_fail("not a PS3 package (.pkg)")
+        rev, ptype = struct.unpack_from(">HH", h, 4)
+        meta_off, meta_count, _meta_size, self.items = struct.unpack_from(">IIII", h, 8)
+        total, self.data_off, self.data_size = struct.unpack_from(">QQQ", h, 0x18)
+        if rev != 0x8000:
+            raise input_fail("this package is not a finished retail one (a debug package): not handled")
+        if ptype != 1:
+            raise input_fail(f"not a PS3 package (type {ptype})")
+        if total != self.size or self.data_off + self.data_size > self.size or self.items > 1000000:
+            raise input_fail("the package is cut off or damaged (its sizes do not fit the file)")
+        self.content_id = h[0x30:0x54].split(b"\0")[0].decode("ascii", "replace")
+        self.key = keys.arrays.get("PKG_AES_KEY", b"")
+        if len(self.key) != 16:
+            raise keys_fail("could not read PKG_AES_KEY from key_vault.h")
+        self.iv = int.from_bytes(h[0x70:0x80], "big")
+        # Metadata packets (in the clear): 0x0A = the folder it installs into, after 8 other bytes.
+        self.folder = ""
+        try:
+            self.f.seek(meta_off)
+            for _ in range(min(meta_count, 64)):
+                pid, psize = struct.unpack(">II", self.f.read(8))
+                body = self.f.read(psize)
+                if pid == 0x0A and psize > 8:
+                    self.folder = body[8:].split(b"\0")[0].decode("ascii", "replace")
+        except (OSError, struct.error):
+            pass
+        if not re.match(r"^[A-Z0-9_\-]{4,32}$", self.folder or ""):
+            self.folder = self.content_id[7:16]
+        if not re.match(r"^[A-Z]{4}\d{5}$", self.folder):
+            raise input_fail(f"could not tell which game this package belongs to (content {self.content_id!r})")
+        self.entries = None
+
+    def close(self):
+        try:
+            self.f.close()
+        except OSError:
+            pass
+
+    def plain(self, off, size):
+        """size bytes of the data area at off, unlocked."""
+        if off < 0 or off + size > self.data_size:
+            raise input_fail("the package's own tables point outside it (damaged)")
+        a = off & ~15
+        n = (off + size - a + 15) // 16
+        self.f.seek(self.data_off + a)
+        enc = self.f.read(n * 16)
+        ks = self.aes.ecb_encrypt(self.key, _counter_blocks((self.iv + a // 16) & ((1 << 128) - 1), n))
+        return _xor(enc, ks)[off - a:off - a + size]
+
+    def check_footer(self, tick=None):
+        """The last 32 bytes are the SHA-1 of everything before them, then 12 zero bytes."""
+        sha, left = hashlib.sha1(), self.size - 32
+        self.f.seek(0)
+        while left > 0:
+            b = self.f.read(min(8 << 20, left))
+            if not b:
+                break
+            sha.update(b)
+            left -= len(b)
+            if tick:
+                tick(len(b))
+        tail = self.f.read(32)
+        if left or tail != sha.digest() + bytes(12):
+            raise input_fail("the package is damaged (its own checksum does not match): download it again")
+
+    def read_table(self):
+        if self.entries is not None:
+            return self.entries
+        tbl = self.plain(0, self.items * 0x20)
+        out = []
+        for i in range(self.items):
+            name_off, name_size, d_off, d_size, flags, _pad = struct.unpack_from(">IIQQII", tbl, i * 0x20)
+            if name_size == 0 or name_size > 1024:
+                raise input_fail("the package's file table is damaged (or it is not a PS3 retail package)")
+            name = self.plain(name_off, name_size).split(b"\0")[0].decode("utf-8", "strict").replace("\\", "/")
+            parts = [p for p in name.split("/") if p]
+            if not parts or any(p in (".", "..") or ":" in p for p in parts) or name.startswith("/"):
+                raise input_fail(f"the package holds a file name that is not allowed ({name!r})")
+            out.append(("/".join(parts), d_off, d_size, flags))
+        self.entries = out
+        return out
+
+    def sfo(self):
+        for name, d_off, d_size, flags in self.read_table():
+            if name == "PARAM.SFO" and d_size < (1 << 20):
+                return read_sfo(self.plain(d_off, d_size))
+        return {}
+
+
+def install_package(pkg_path, game_root, keys, aes, info_only=False, log=print):
+    """Unpack a package into <game_root>/<its title folder>, as a PS3 (or RPCS3) installs it:
+    files that are there are replaced only where the package says so; an update is refused unless
+    the version it builds on is installed. Returns (folder name, files written, files kept)."""
+    p = Package(pkg_path, keys, aes)
+    try:
+        table = p.read_table()
+        s = p.sfo()
+        app, target, cat = str(s.get("APP_VER", "")), str(s.get("TARGET_APP_VER", "")), str(s.get("CATEGORY", ""))
+        dest = os.path.join(game_root, p.folder)
+        have = ""
+        try:
+            with open(os.path.join(dest, "PARAM.SFO"), "rb") as f:
+                have = str(read_sfo(f.read()).get("APP_VER", ""))
+        except OSError:
+            pass
+        files = [e for e in table if (e[3] & 0xFF) not in (4, 0x12)]
+        total = sum(e[2] for e in files)
+        log(f"PKG content={p.content_id} dir={p.folder} files={len(files)} bytes={total} app_ver={app or '-'}"
+            f" target={target or '-'} category={cat or '-'} installed={have or '-'}", flush=True)
+        if info_only:
+            return p.folder, 0, 0
+        # A game update: its own PARAM.SFO with a version, category "GD" (the first one names no
+        # version to go on top of: it goes on the disc's 01.00).
+        is_update = _ver(app) is not None and cat == "GD"
+        if is_update:
+            now = _ver(have) or 1.00            # nothing installed = the disc's 01.00
+            if now >= _ver(app):
+                log(f"PKG_SKIP update {app}: {have or '01.00'} is installed already", flush=True)
+                return p.folder, 0, 0
+            if _ver(target) is not None and now < _ver(target):
+                raise input_fail(f"update {app} goes on top of {target}, and {have or '01.00'} is installed: install the updates in order")
+        done = [0]
+        last = [time.time()]
+
+        def tick(n, scale=1):
+            done[0] += n
+            if time.time() - last[0] >= 1.0:
+                last[0] = time.time()
+                log(f"PKG_PROGRESS {done[0] // scale} {total_work}", flush=True)
+        total_work = p.size + total
+        p.check_footer(tick)
+        written = kept = 0
+        made = set()
+        for name, d_off, d_size, flags in table:
+            path = os.path.join(dest, *name.split("/"))
+            if (flags & 0xFF) in (4, 0x12):
+                os.makedirs(path, exist_ok=True)
+                continue
+            parent = os.path.dirname(path)
+            if parent not in made:
+                os.makedirs(parent, exist_ok=True)
+                made.add(parent)
+            if os.path.exists(path) and not (flags & 0x80000000):
+                kept += 1                       # there already, and the package does not ask to replace it
+                tick(d_size)
+                continue
+            if d_off + d_size > p.data_size or (d_off & 15):
+                raise input_fail(f"the package's entry for {name} is damaged")
+            part = path + ".pkgpart"
+            try:
+                with open(part, "wb") as o:
+                    pos = 0
+                    while pos < d_size:
+                        n = min(8 << 20, d_size - pos)
+                        o.write(p.plain(d_off + pos, n))
+                        pos += n
+                        tick(n)
+                os.replace(part, path)
+            except OSError as e:
+                try:
+                    os.remove(part)
+                except OSError:
+                    pass
+                raise UnlockError(4, "OUTPUT", f"cannot write {path}: {e}")
+            written += 1
+        log(f"PKG_PROGRESS {total_work} {total_work}", flush=True)
+        return p.folder, written, kept
+    finally:
+        p.close()
+
+
 def main(argv):
-    args, keys_dir, offline = [], os.environ.get("PS3_UNLOCK_KEYS") or os.path.join(
-        os.path.dirname(os.path.abspath(__file__)), "ps3_keys"), False
+    args, keys_dir, offline, info_only = [], os.environ.get("PS3_UNLOCK_KEYS") or os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), "ps3_keys"), False, False
     it = iter(argv)
     for a in it:
         if a == "--keys-dir":
             keys_dir = next(it, "")
         elif a == "--offline":
             offline = True
+        elif a == "--info":
+            info_only = True
         else:
             args.append(a)
-    if not args or args[0] not in ("eboot", "firmware", "keys") or len(args) != (1 if args[0] == "keys" else 3):
+    if not args or args[0] not in ("eboot", "firmware", "keys", "pkg") or len(args) != (1 if args[0] == "keys" else 3):
         print(__doc__)
         return 1
     t0 = time.time()
@@ -716,6 +957,10 @@ def main(argv):
                     pass
                 raise UnlockError(4, "OUTPUT", f"cannot write {dst}: {e}")
             print(f"done: {dst} ({len(elf)} bytes, SHA-1 {hashlib.sha1(elf).hexdigest().upper()}) in {time.time() - t0:.1f} s")
+        elif args[0] == "pkg":
+            folder, written, kept = install_package(src, dst, keys, aes, info_only)
+            if not info_only:
+                print(f"done: {written} files written, {kept} kept, in {os.path.join(dst, folder)} in {time.time() - t0:.1f} s")
         else:
             version, n = install_firmware(src, dst, keys, aes)
             print(f"done: firmware {version}, {n} files in {dst} in {time.time() - t0:.1f} s")

@@ -68,15 +68,13 @@ It is built on [ps3recomp](https://github.com/sp00nznet/ps3recomp) and borrows f
 1. Download **[GT5-Installer.bat](https://github.com/MormonFTP-hub/gt5-recomp/releases/latest/download/GT5-Installer.bat)**
    and double-click it. If Windows warns about a downloaded file, choose **Run** (or **More info**, then
    **Run anyway**).
-2. In its window, pick two things and press **Install**:
-   - **your GT5 game**: the folder of your disc dump (the one with `PS3_GAME` in it) or an `.iso`;
-   - **PS3UPDAT.PUP**, Sony's free PS3 system software (the window has a button that opens Sony's page).
+2. In its window, pick **your GT5 game** (the folder of your disc dump, the one with `PS3_GAME` in it, or
+   an `.iso`) and press **Install**. Nothing else is needed: no PS3 system software file and no RPCS3.
 
 That's all, and it all happens in that one window: the steps, a progress bar, and what went wrong if
 something does. Nothing is installed into Windows. It downloads this code and, into the install folder,
 its own copies of Git (38 MB, only when the PC has none), Python (17 MB) and the compiler tools
-(about 1.5 GB, into the install folder: **no Visual Studio is installed or changed**), unlocks your game's executable and the system software (with the port's own small tool; RPCS3 is fetched
-only if that fails, as a tool:
+(about 1.5 GB, into the install folder: **no Visual Studio is installed or changed**), unlocks your game's executable (with the port's own small tool; RPCS3 is not used:
 the game itself runs natively as `gt5.exe`, not in an emulator), builds the game (about an hour the
 first time) with both renderers (DirectX 12 and Vulkan), adds AMD FSR 3 frame generation and, on a PC with
 an NVIDIA RTX card, NVIDIA DLSS, and puts **Gran Turismo 5 (PC)** on your desktop, which opens the
@@ -172,7 +170,7 @@ That one command does everything:
 4. It rebuilds only what changed.
 
 Kept as they are:
-- your saves (`GT5\gamedata`), a game update's data (`GT5\hdd0`) and game files (`GT5\input`, `GT5\vfs`, `GT5\dev_flash`);
+- your saves (`GT5\gamedata`), a game update's data (`GT5\hdd0`) and game files (`GT5\input`, `GT5\vfs`);
 - the shader cache;
 - edits you made to files such as `play.bat`.
 
@@ -200,7 +198,7 @@ once (about 10 minutes), because older installs have no record of what their cod
 
 A ZIP download can't update itself. Clone the repository fresh as in [Setup](#setup), step 1. Then
 move these folders over from your old copy and run `update.ps1`:
-- your game files: `GT5\input`, `GT5\vfs`, `GT5\dev_flash`;
+- your game files: `GT5\input`, `GT5\vfs`;
 - your saves: `GT5\gamedata` (and `GT5\hdd0`, if you set up a game update).
 
 ### Go back to an older version
@@ -553,8 +551,8 @@ and the tools find the few spots that could differ between releases in your own 
 **A: Game updates work now, as far as they've been tried.** 2.17, the last update, runs on the US
 release (menus, GT Mode and a full 16-car Arcade race at 60 fps) and on the European one (its first-start
 questions, the opening movie, Arcade and a 16-car race). The Asian release's 2.01 boots,
-loads a career save and races. An update needs two things from your PS3 (or RPCS3): its executable
-and its data, see [Game updates](#game-updates).
+loads a career save and races. An update needs its executable and its data: the launcher gets and installs both, see
+[Game updates](#game-updates).
 
 **The GT5 Master Mod runs too** (Nenkai's and ddm's; 2.0.0a on Europe 2.11 on the test PC, and players
 run it on the US release): its menus and news, its SELECT debug menu, Arcade's Master level and races.
@@ -595,8 +593,8 @@ from python.org with "Add python.exe to PATH" ticked, then run setup again.
 **A: Builds made before 10 November did that; it's fixed.** Setup didn't compile the game's SPU code
 (the PS3's co-processors), so the game waited forever for work that never ran. Update and it's
 rebuilt with that code: in the `gt5-recomp` folder run `powershell -ExecutionPolicy Bypass -File update.ps1`
-(or double-click `setup.bat`; if you downloaded the ZIP, download it again and move your `input`,
-`vfs` and `dev_flash` folders into the new `GT5` folder). While it builds, it prints
+(or double-click `setup.bat`; if you downloaded the ZIP, download it again and move your `input`
+and `vfs` folders into the new `GT5` folder). While it builds, it prints
 `SPU jobs found in EBOOT.elf: N of 15`.
 
 **Still black on a new version?** Look in `GT5\logs\play.err` for `open FAIL '/dev_bdvd/PS3_GAME/USRDIR/GT.VOL'`.
@@ -708,27 +706,10 @@ bash setup.sh --install-deps
 ```
 
 `--install-deps` installs packages using apt, dnf, pacman or zypper and may ask for your password.
-Without it, setup prints the install command. Three `[missing]` game-file entries are normal on
-the first run: the next steps supply them.
+Without it, setup prints the install command. Two `[missing]` game-file entries are normal on
+the first run: the next step supplies them.
 
-**2. Prepare the firmware with RPCS3**
-
-Download and open the Linux AppImage from [RPCS3 downloads](https://rpcs3.net/download).
-RPCS3 is a free PS3 emulator, used here to extract firmware and decrypt the game executable.
-You can close it once those jobs are done.
-
-Download `PS3UPDAT.PUP` from [Sony's PS3 system software page](https://www.playstation.com/support/hardware/ps3/system-software/).
-In RPCS3, choose **File > Install Firmware** and select that file. Once installation finishes,
-copy the extracted firmware:
-
-```bash
-mkdir -p GT5/dev_flash
-cp -a ~/.config/rpcs3/dev_flash/. GT5/dev_flash/
-```
-
-If RPCS3 stores `dev_flash` elsewhere, use that location instead.
-
-**3. Copy the game data**
+**2. Copy the game data**
 
 Copy the whole `PS3_GAME` folder from your disc dump:
 
@@ -737,26 +718,16 @@ mkdir -p GT5/vfs/PS3_GAME
 cp -a "/path/to/your/disc/PS3_GAME/." GT5/vfs/PS3_GAME/
 ```
 
-**4. Decrypt the game executable**
-
-In RPCS3, choose **Utilities > Decrypt PS3 Binaries** and select your disc dump's
-`PS3_GAME/USRDIR/EBOOT.BIN`. Copy the decrypted output to `GT5/input/EBOOT.elf`:
-
-```bash
-mkdir -p GT5/input
-cp "/path/to/decrypted/EBOOT.elf" GT5/input/EBOOT.elf
-```
-
-Use the file produced by decryption; renaming the encrypted `EBOOT.BIN` does not decrypt it.
+Setup unlocks the game's executable (`PS3_GAME/USRDIR/EBOOT.BIN`) into `GT5/input/EBOOT.elf` by itself,
+with the port's own tool: no RPCS3 and no PS3 system software file are needed.
 For a game update, follow [Game updates](#game-updates-2xx) to keep the executable and data matched.
 
-**5. Check and build**
+**3. Check and build**
 
-Check these paths exist, without an extra `dev_flash` or `PS3_GAME` folder nested inside:
+Check these paths exist, without an extra `PS3_GAME` folder nested inside:
 
 ```text
-GT5/dev_flash/sys/
-GT5/input/EBOOT.elf
+GT5/vfs/PS3_GAME/USRDIR/EBOOT.BIN
 GT5/vfs/PS3_GAME/PARAM.SFO
 GT5/vfs/PS3_GAME/USRDIR/GT.VOL
 ```
@@ -905,8 +876,8 @@ The Windows build under **Proton** is untried too. Direct3D 12 would go through 
   only when the PC has no Git) and `tools\python` (python.org's 3.11.9, 17 MB) and runs every tool on
   them; nothing is installed in Windows.
 - About 25 GB free on Windows or 30 GB on Linux, including about 17 GB of game files.
-- Your own GT5 disc (BCES00569, BCUS98114 or BCAS20108) and the means to dump it, and
-  [RPCS3](https://rpcs3.net/download) to install PS3 firmware and decrypt the game's executable.
+- Your own GT5 disc (BCES00569, BCUS98114 or BCAS20108) and the means to dump it. Nothing else of Sony's:
+  no PS3 system software file, and no RPCS3 (since v0.1.115).
 
 <a id="pc-check"></a>
 
@@ -996,14 +967,14 @@ about 2.2 GB of files in `PDIPFS`). The port needs both.
 **The easiest way: pick the version (since v0.1.112).** In the launcher, *Help > Game version and DLC*
 shows the version your game is at and lets you change it to any other: **1.00** (the disc), any official
 update up to **2.17** (the newest), or **2.11** for the [Master Mod](#game-mods). The launcher downloads the
-updates it needs straight from Sony's update server (the same packages a PS3 or RPCS3 gets), checks each one
+updates it needs straight from Sony's update server (the same packages a PS3 gets), checks each one
 against Sony's own list (size and SHA-1, kept in `GT5\scripts\gt5_updates.txt`), installs them and builds the
 game for that version (about 20 minutes once they're downloaded; 1.05 to 2.17 is about 4.6 GB in all).
 - Going to an older version installs the updates from 1.05 on again; going to 1.00 removes the update data.
   If anything fails, the game is put back as it was.
 - Downloaded packages are kept in `downloads\game-updates` in the install folder for the next change (delete
   them if you need the space).
-- It uses the install's own RPCS3 (`tools\rpcs3`, fetched once), never yours. Your saves aren't touched.
+- The packages are checked and unpacked by the port's own tool (no RPCS3). Your saves aren't touched.
 - Not while a game mod is installed: remove the mod first (an update would overwrite part of it).
 - Europe (`BCES00569`), North America (`BCUS98114`), Asia (`BCAS20108`) and Japan (`BCJS30001`).
 - Without the launcher: `powershell -ExecutionPolicy Bypass -File GT5\scripts\game_version.ps1 -To 2.11`.
@@ -1013,35 +984,29 @@ your DLC packages).
 
 **From your update's `.pkg` files (since v0.1.45):** in the launcher, *Help > Install a game
 update or DLC (.pkg)*, and pick the update packages. Pick all of them from the first one (1.05, 1.06
-... up to the version you want): RPCS3 installs updates only in order, and the ones it already has are
-skipped. This runs `GT5\scripts\install_pkg.ps1`. It installs the packages with RPCS3 (its window opens
-for each one; leave it be), copies the game's folder into `GT5\hdd0` and unlocks the new executable:
-steps 1 to 3 below. The launcher then builds the game for the update by itself (step 4, about 20 minutes;
-done by script instead, run `Update.bat` or `setup.bat` afterwards). It needs RPCS3: the installer's own copy in
-`tools\rpcs3` is found by itself, or set `GT5_RPCS3` to your `rpcs3.exe`. Without the launcher:
+... up to the version you want): updates install only in order, and the ones already installed are
+skipped. This runs `GT5\scripts\install_pkg.ps1`. It checks each package, unpacks it into `GT5\hdd0` and
+unlocks the new executable, all with the port's own tool (no RPCS3, no other window): steps 1 and 2 below.
+The launcher then builds the game for the update by itself (step 3, about 20 minutes; done by script
+instead, run `Update.bat` or `setup.bat` afterwards). Without the launcher:
 `powershell -ExecutionPolicy Bypass -File GT5\scripts\install_pkg.ps1 <folder with the .pkg files>`.
 
 By hand:
 
-1. **Get the update's files**: install the update in [RPCS3](https://rpcs3.net) (*File > Install
-   Packages/Raps/Edats* with the update's `.pkg`), or copy the game's folder from your PS3's hard disk.
-   Either way they're in `dev_hdd0\game\<title ID>\USRDIR` (for example `dev_hdd0\game\BCES00569\USRDIR`).
-2. **The executable**: decrypt that folder's `EBOOT.BIN` (RPCS3, *Utilities > Decrypt PS3 Binaries*) and
-   save the result as `GT5\input\EBOOT.elf`. The disc's `PS3_GAME` stays as it is in `GT5\vfs`.
-   **Don't skip this step.** With the update's data but the disc's executable, the game stops before
-   the main menu (a black screen). `setup.ps1` (and `Update.bat`) now does it for you when it can: it
-   finds the update's `EBOOT.BIN` in `GT5\hdd0\game\<title ID>\USRDIR` or in RPCS3's `dev_hdd0` (a mod
-   that comes with its own `EBOOT.BIN` puts it there too), unlocks it with RPCS3, and keeps the disc's
-   as `GT5\input\EBOOT.disc-01.00.elf`. If your RPCS3 isn't found, set `GT5_RPCS3` to its `rpcs3.exe`,
-   or do this step by hand.
-3. **The data**: copy everything else in that `USRDIR` folder (`PDIPFS` and the rest, not `EBOOT.BIN`)
-   to `GT5\hdd0\game\<title ID>\USRDIR`, keeping the folder names. Without it the game starts, but
-   Arcade Mode has no courses to choose.
-4. Run `setup.ps1` again: it lifts and builds the new executable (about an hour).
+1. **The update's files** go into `GT5\hdd0\game\<title ID>` (for example `GT5\hdd0\game\BCES00569`),
+   all of them, `USRDIR\EBOOT.BIN` included. Either copy that folder from your PS3's hard disk
+   (`dev_hdd0\game\<title ID>`), or unpack each package in order with the port's own tool:
+   `venv\Scripts\python GT5\scripts\ps3_unlock.py pkg <the .pkg> GT5\hdd0\game`.
+   Without the data the game starts, but Arcade Mode has no courses to choose.
+2. **The executable**: `setup.ps1` (and `Update.bat`) unlocks the update's `EBOOT.BIN` from that folder into
+   `GT5\input\EBOOT.elf` by itself and keeps the disc's as `GT5\input\EBOOT.disc-01.00.elf`.
+   The two must match: with the update's data but the disc's executable, the game stops before the main
+   menu (a black screen).
+3. Run `setup.ps1` again: it lifts and builds the new executable (about an hour).
 
 If your disc folder's `PS3_GAME\PARAM.SFO` already says version 02.xx, it holds the update's
-executable, but usually not its data: step 3 is still needed. `GT5-Installer.bat` doesn't do these
-steps yet.
+executable, but usually not its data: step 1 is still needed. `GT5-Installer.bat` doesn't do these
+steps; the launcher's *Help > Game version and DLC* does.
 
 <a id="game-mods"></a>
 
@@ -1087,8 +1052,7 @@ themselves come with the updates. Only DLC you bought unlocks: a voucher opens o
 its licence.
 
 1. **The vouchers**: pick the DLC `.pkg` files in the launcher's *Help > Install a game update or DLC
-   (.pkg)*, which puts them in place. Or install them in RPCS3 (*File > Install Packages/Raps/Edats*),
-   or use your PS3's hard disk, and copy `dev_hdd0\game\<title ID>\USRDIR\vou` to
+   (.pkg)*, which puts them in place. Or use your PS3's hard disk and copy `dev_hdd0\game\<title ID>\USRDIR\vou` to
    `GT5\hdd0\game\<title ID>\USRDIR\vou`.
 2. **The licence keys**: for each voucher, the 16-byte key of its licence, saved as
    `GT5\hdd0\home\00000001\exdata\<content ID>.rifkey`. The content ID is the name of the licence
@@ -1128,12 +1092,9 @@ in place it builds the game for you. You never need to run the scripts in `GT5\s
 3. Add your own game files (setup checks each one and catches the usual mistakes):
    - **Game data:** dump your own GT5 disc (BCES00569 or BCUS98114) and copy its `PS3_GAME` folder to
      `GT5\vfs`, so that `GT5\vfs\PS3_GAME\USRDIR` exists.
-   - **System software:** in RPCS3, install the PS3 firmware (File > Install Firmware, with
-     `PS3UPDAT.PUP` from Sony). Then copy RPCS3's `dev_flash` folder to `GT5\dev_flash`, so that
-     `GT5\dev_flash\sys` exists.
-   - **The executable:** in RPCS3, Utilities > Decrypt PS3 Binaries, choose your disc's
-     `PS3_GAME\USRDIR\EBOOT.BIN`, and save the decrypted file as `GT5\input\EBOOT.elf`. It must be the
-     decrypted one: setup tells you if it's still encrypted.
+   - **The executable:** nothing to do. Setup unlocks your disc's `PS3_GAME\USRDIR\EBOOT.BIN` into
+     `GT5\input\EBOOT.elf` by itself, with the port's own tool (no RPCS3). The PS3's system software is
+     not needed.
 4. Run setup again (the same command, or double-click `setup.bat`):
 
    ```
@@ -1157,9 +1118,8 @@ gt5-recomp\
   ffmpeg\             fetched by setup.ps1
   venv\               made by setup.ps1
   GT5\
-    input\            YOU ADD: EBOOT.elf (decrypted)
+    input\            made by setup.ps1: EBOOT.elf, unlocked from your disc's EBOOT.BIN
     vfs\PS3_GAME\     YOU ADD: the PS3_GAME folder from your disc
-    dev_flash\        YOU ADD: from RPCS3 after installing Sony's firmware
     generated\, src\gen\, analysis\   made by setup.ps1 from your EBOOT.elf
     build\            made by setup.ps1 (gt5.exe)
     hdd0\, logs\      made when you play

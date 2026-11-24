@@ -9,11 +9,11 @@
 # EBOOT.BIN; the disc version writes neither there.
 #
 # When GT5\input\EBOOT.elf is a disc's 01.00 and an update is installed, this finds the update's
-# EBOOT.BIN (in GT5\hdd0, else in RPCS3's dev_hdd0, where a mod's own EBOOT.BIN also lands), unlocks it
-# with RPCS3 (rpcs3 --no-gui --decrypt, the same step the installer and README use for the disc's) and
-# puts the result in GT5\input\EBOOT.elf. The disc's one is kept as GT5\input\EBOOT.disc-01.00.elf.
-# RPCS3 is looked for in GT5_RPCS3 (rpcs3.exe or its folder), the installer's tools\rpcs3, PATH, and a
-# few usual folders.
+# EBOOT.BIN (in GT5\hdd0, where install_pkg.ps1 puts it; else in an RPCS3 folder's dev_hdd0, for data that
+# was copied over from RPCS3 by hand), unlocks it with the port's own tool (ps3_unlock.py, as the installer
+# does for the disc's) and puts the result in GT5\input\EBOOT.elf. The disc's one is kept as
+# GT5\input\EBOOT.disc-01.00.elf. RPCS3 itself is never started; its folder is only looked in for the file
+# (GT5_RPCS3, the old tools\rpcs3, PATH, and a few usual folders).
 #
 # Exit codes: 0 nothing to do, or switched; 2 an update is installed but its executable couldn't be
 # made (the message says what to do by hand).
@@ -69,7 +69,7 @@ $what = if ($upd.Ver) { "update $($upd.Ver)" } else { "a game update" }
 Write-Host "  GT5\hdd0\game\$($upd.Id) holds $what's data, but GT5\input\EBOOT.elf is the disc's version 01.00 ($($discSha[$sha]))."
 Write-Host "  The game needs the update's executable too (with the disc's it stops before the main menu)."
 
-# RPCS3, to unlock EBOOT.BIN.
+# RPCS3 folders, only as places the update's EBOOT.BIN may be in.
 $rpcs3 = @()
 if ($env:GT5_RPCS3) { $rpcs3 += $(if ($env:GT5_RPCS3 -like "*.exe") { $env:GT5_RPCS3 } else { Join-Path $env:GT5_RPCS3 "rpcs3.exe" }) }
 $rpcs3 += Join-Path $base "tools\rpcs3\rpcs3.exe"
@@ -113,15 +113,20 @@ foreach ($x in $rpcs3) {
 }
 $cands = @($cands | Select-Object -Unique)
 
-$manual = "Decrypt the update's EBOOT.BIN (dev_hdd0\game\$($upd.Id)\USRDIR\EBOOT.BIN in RPCS3, or a mod's own EBOOT.BIN if it comes with one) " +
-          "with RPCS3's Utilities > Decrypt PS3 Binaries and save the result as GT5\input\EBOOT.elf. To play the disc version " +
+$manual = "Put the update's EBOOT.BIN (it is in the update's package; the launcher's Help > Game version and DLC installs the whole update) " +
+          "into GT5\hdd0\game\$($upd.Id)\USRDIR and run this again. To play the disc version " +
           "instead, move the folder GT5\hdd0\game\$($upd.Id) somewhere else (your saves are in GT5\gamedata, not there)."
 if (-not $cands) {
-    Write-Host "  Couldn't find the update's EBOOT.BIN (not in GT5\hdd0\game\$($upd.Id)\USRDIR, and no RPCS3 found with it)." -ForegroundColor Yellow
+    Write-Host "  Couldn't find the update's EBOOT.BIN (not in GT5\hdd0\game\$($upd.Id)\USRDIR)." -ForegroundColor Yellow
     Write-Host "  $manual" -ForegroundColor Yellow
     exit 2
 }
 
+# The port's own unlock tool, on the port's own Python.
+$tool = Join-Path $PSScriptRoot "ps3_unlock.py"
+$py = @((Join-Path $base "tools\python\python.exe"), (Join-Path $base "venv\Scripts\python.exe")) | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+if (-not $py) { $c = Get-Command python.exe -ErrorAction SilentlyContinue; if ($c) { $py = $c.Source } }
+$why = ""
 $work = Join-Path $Gt5 "input\decrypt_tmp"
 foreach ($bin in $cands) {
     Remove-Item -Recurse -Force $work -ErrorAction SilentlyContinue
@@ -131,10 +136,11 @@ foreach ($bin in $cands) {
     $head = [IO.File]::ReadAllBytes((Join-Path $work "EBOOT.BIN"))[0..3]
     if ($head[0] -eq 0x7F -and $head[1] -eq 0x45 -and $head[2] -eq 0x4C -and $head[3] -eq 0x46) {
         Move-Item (Join-Path $work "EBOOT.BIN") $out -Force   # already unlocked (some mods ship it so)
-    } elseif ($rpcs3) {
-        Write-Host "  unlocking $bin with RPCS3 ($($rpcs3[0]))..."
-        $p = Start-Process -FilePath $rpcs3[0] -ArgumentList @("--no-gui", "--decrypt", "`"$(Join-Path $work 'EBOOT.BIN')`"") -PassThru -WindowStyle Hidden
-        if (-not $p.WaitForExit(300000)) { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue }
+    } elseif ($py -and (Test-Path -LiteralPath $tool)) {
+        Write-Host "  unlocking $bin ..."
+        & $py -I $tool eboot (Join-Path $work "EBOOT.BIN") $out --keys-dir (Join-Path $base "tools\ps3_keys") 2>&1 | ForEach-Object {
+            if ("$_" -match '^PS3_UNLOCK_FAIL\s+\d+\s+\w+:\s*(.*)$') { $why = $Matches[1].Trim() }
+        }
     }
     if ((Test-Path $out) -and ([IO.File]::ReadAllBytes($out)[0] -eq 0x7F)) {
         $newSha = (Get-FileHash $out -Algorithm SHA1).Hash
@@ -149,7 +155,7 @@ foreach ($bin in $cands) {
     }
 }
 Remove-Item -Recurse -Force $work -ErrorAction SilentlyContinue
-if (-not $rpcs3) { Write-Host "  No RPCS3 found to unlock EBOOT.BIN (set GT5_RPCS3 to rpcs3.exe to point at yours)." -ForegroundColor Yellow }
-else { Write-Host "  Unlocking EBOOT.BIN with RPCS3 failed." -ForegroundColor Yellow }
+if (-not $py -or -not (Test-Path -LiteralPath $tool)) { Write-Host "  This install is missing the part that unlocks it (GT5\scripts\ps3_unlock.py, or its Python): run Update.bat, then try again." -ForegroundColor Yellow }
+else { Write-Host "  Unlocking the update's EBOOT.BIN didn't work$(if ($why) { " ($why)" })." -ForegroundColor Yellow }
 Write-Host "  $manual" -ForegroundColor Yellow
 exit 2
