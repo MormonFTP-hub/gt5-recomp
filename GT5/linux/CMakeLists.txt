@@ -113,6 +113,9 @@ add_executable(gt5
     "${GT5_DIR}/src/gt5_padmap.cpp"
     "${GT5_DIR}/src/gt5_glyphs.cpp"
     "${GT5_DIR}/src/gt5_glyph_art.c"
+    # pthread_create with a second try at a bigger stack: SDL 2.30.0's PulseAudio thread asks for less than
+    # this program's smallest and the game hung on a black screen (GitHub #20, 24 Nov 2026)
+    "${CMAKE_CURRENT_SOURCE_DIR}/thread_stack.c"
     ${PS3RECOMP_SCAFFOLD}
     ${HLE_NID_TABLE}
     ${RECOMP_SOURCES}
@@ -172,4 +175,11 @@ foreach(_eq_job jEB79FDFC jE3FDDA10)
 endforeach()
 
 target_link_libraries(gt5 PRIVATE ps3recomp_runtime SDL2::SDL2 ${CMAKE_DL_LIBS} m pthread)
+# thread_stack.c's pthread_create has to be in the program's dynamic symbols so that SDL's calls reach it. The
+# linker puts it there anyway because libSDL2 uses pthread_create; this says so outright where the linker can.
+include(CheckLinkerFlag)
+check_linker_flag(C "LINKER:--export-dynamic-symbol=pthread_create" GT5_LINK_EXPORT_SYMBOL)
+if(GT5_LINK_EXPORT_SYMBOL)
+    target_link_options(gt5 PRIVATE "LINKER:--export-dynamic-symbol=pthread_create")
+endif()
 set_target_properties(gt5 PROPERTIES LINKER_LANGUAGE CXX)

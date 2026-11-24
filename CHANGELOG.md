@@ -9,6 +9,16 @@ release on the tested rig in [STATUS.md](STATUS.md) unless a day says otherwise.
 
 ## 24 Nov 2026
 
+🏷️ Released as **v0.1.114**
+
+🏷️ Released as **v0.1.114**
+
+🐧 **Linux: no more black screen at start when the sound goes through PulseAudio or PipeWire**
+
+- **Linux: the game no longer hangs on a black screen at start when the sound goes through PulseAudio** (or PipeWire's PulseAudio service), [#20](https://github.com/MormonFTP-hub/gt5-recomp/issues/20), found by melroy89. SDL 2.30.0, the version Ubuntu 24.04 and Linux Mint 22 ship, starts a helper thread with a 256 KiB stack. This program's smallest thread stack is about 344 KiB because its per-thread data is large, so that thread never started and SDL waited for it forever.
+  - The game now gives a thread like that a second try with a bigger stack (1 MiB) and says so in the log: `[threads] a library asked for a 256 KiB thread stack...`. A thread that starts the first time is untouched.
+  - SDL 2.30.12 and later no longer wait for a thread that didn't start; the fix works with either. `SDL_AUDIODRIVER` overrides in `settings.sh` aren't needed for this any more. Windows is not affected.
+
 🏷️ Released as **v0.1.113**
 
 🎮 **Wheels: each pedal can be on a device of its own**, and the in-game menu takes a pedal from whichever device you push it on
