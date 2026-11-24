@@ -7,6 +7,19 @@ release on the tested rig in [STATUS.md](STATUS.md) unless a day says otherwise.
 > or repeated frames (fixed on 4 Nov and 9 Nov), so treat them as rough before-and-after comparisons.
 > From 9 Nov on, numbers are the game's own frames.
 
+## 24 Nov 2026
+
+🏷️ Released as **v0.1.113**
+
+🎮 **Wheels: each pedal can be on a device of its own**, and the in-game menu takes a pedal from whichever device you push it on
+🎡 **Wheel bases that don't call themselves a wheel are found by themselves** (a MOZA R5 Base was passed over)
+
+- **Each pedal can come from a device of its own** (asked for on Discord: a player's throttle and clutch are one USB device and his brake another).
+  - In the game, **F1** > **Controls** > **Wheel buttons and pedals**: press Enter on a pedal's row and push that pedal down. While the menu is open the port now reads every connected controller, and the pedal keeps both the axis and the device it moved on; the row shows that device's name. Restart the game afterwards, as for the other rows.
+  - Or in `settings.bat`: `PS3_WHEEL_THROTTLE_DEVICE`, `PS3_WHEEL_BRAKE_DEVICE` and `PS3_WHEEL_CLUTCH_DEVICE` (part of the device's name or its `VID:PID`, or `wheel` for the wheel's own pedal), over `PS3_WHEEL_PEDAL_DEVICE` for the rest. The axis is still the one `PS3_WHEEL_PEDALS` names (unset: that device's first axis).
+  - Throttle and brake on one shared axis (older wheels) still work as before when both are on one device. Not tried with real pedals here: the test PC has no wheel.
+- **Wheel bases that don't call themselves a wheel are found by themselves** (Discord): a MOZA R5 Base was listed in the log but passed over, as Windows calls it neither a driving device nor a wheel and its name has no "wheel" in it. Any device with force feedback that isn't a gamepad now counts as a wheel. Until now `set "PS3_WHEEL=MOZA"` (part of its name) was the way round it, and still works.
+
 ## 23 Nov 2026
 
 🏷️ Released as **v0.1.112**

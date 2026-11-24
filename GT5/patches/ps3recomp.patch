@@ -78769,7 +78769,7 @@ diff --git a/libs/hardware/wheel_host_win.c b/libs/hardware/wheel_host_win.c
 new file mode 100644
 --- /dev/null
 +++ b/libs/hardware/wheel_host_win.c
-@@ -0,0 +1,1850 @@
+@@ -0,0 +1,1989 @@
 +/*
 + * ps3recomp - the PC steering wheel behind the emulated G27 (see wheel.h)
 + *
@@ -78811,6 +78811,10 @@ new file mode 100644
 + *   PS3_WHEEL_BUTTON_DEVICE  the same for the buttons (a rim or a button box on its own USB): the
 + *                        buttons, the d-pad (its hat, else the wheel's) and PS3_WHEEL_BUTTONS' numbers
 + *                        are that device's. The in-game menu's wheel page sets both.
++ *   PS3_WHEEL_THROTTLE_DEVICE / _BRAKE_DEVICE / _CLUTCH_DEVICE  one pedal on a device of its own (unset: the
++ *                        pedals' device, else the wheel; "wheel": the wheel's own). Its axis is still the
++ *                        PS3_WHEEL_PEDALS one (unset: that device's first axis). The wheel page's pedal rows
++ *                        set these to the device the pedal is pushed on.
 + *   PS3_WHEEL_SHIFTER    1/0: report an H-shifter attached or not (default: once
 + *                        a gear is engaged).
 + *   PS3_WHEEL_TRACE      1 = log what the wheel and the game exchange.
@@ -78872,12 +78876,15 @@ new file mode 100644
 +/* Pedals and buttons on a device of their own (PS3_WHEEL_PEDAL_DEVICE / PS3_WHEEL_BUTTON_DEVICE): a
 + * direct-drive base with USB pedals, a rim or a button box that is its own USB device, as RPCS3's G27
 + * lets each part come from any device (Discord, 23 Nov 2026). The wheel keeps the steering and the
-+ * force feedback; this device is only read, never held exclusively. */
-+enum { XD_PEDALS, XD_BUTTONS, XD_COUNT };
++ * force feedback; this device is only read, never held exclusively.
++ * One pedal can be on a device of its own too (PS3_WHEEL_THROTTLE_DEVICE / _BRAKE_DEVICE / _CLUTCH_DEVICE):
++ * a player's throttle and clutch are one USB device and his brake another (Discord, 24 Nov 2026). */
++enum { XD_PEDALS, XD_BUTTONS, XD_THROTTLE, XD_BRAKE, XD_CLUTCH, XD_COUNT };
 +typedef struct {
-+    const char*           what;              /* "pedals" / "buttons", for the log */
++    const char*           what;              /* "pedals" / "buttons" / "throttle" ..., for the log */
 +    char                  match[128];        /* lower case; "" = the wheel's own */
 +    int                   on_wheel;          /* match names the wheel itself: read from it as usual */
++    int                   forced_wheel;      /* one pedal's device set to "wheel": that pedal is the wheel's own */
 +    LPDIRECTINPUTDEVICE8W dev;
 +    char                  name[260];
 +    unsigned short        vid, pid;
@@ -78896,9 +78903,21 @@ new file mode 100644
 +    unsigned short        rest_vid, rest_pid;
 +    LONG                  rest[AX_COUNT];
 +} XDev;
-+static XDev s_xd[XD_COUNT] = { { "pedals" }, { "buttons" } };
++static XDev s_xd[XD_COUNT] = { { "pedals" }, { "buttons" }, { "throttle" }, { "brake" }, { "clutch" } };
 +/* The pedals / buttons come from a device of their own (configured and not the wheel itself). */
 +static int xd_separate(const XDev* d) { return d->match[0] && !d->on_wheel; }
++/* A device the pedals (or one of them) are read from. */
++static int xd_is_pedal(int x) { return x == XD_PEDALS || x >= XD_THROTTLE; }
++/* Where pedal p (0 throttle, 1 brake, 2 clutch) is read from: its own device, else the pedals' device,
++ * else the wheel (-1). */
++static int pedal_src(int p)
++{
++    const XDev* own = &s_xd[XD_THROTTLE + p];
++    if (own->forced_wheel) return -1;
++    if (xd_separate(own)) return XD_THROTTLE + p;
++    if (xd_separate(&s_xd[XD_PEDALS])) return XD_PEDALS;
++    return -1;
++}
 +
 +static int   s_mode = -1;
 +static char  s_match[128];
@@ -78941,9 +78960,11 @@ new file mode 100644
 +        if (!strcmp(m, "off") || !strcmp(m, "0") || !strcmp(m, "no")) s_menu_cfg = 0;
 +        else if (!strcmp(m, "on") || !strcmp(m, "1") || !strcmp(m, "yes")) s_menu_cfg = 1;
 +    }
-+    static const char* const xkey[XD_COUNT] = { "PS3_WHEEL_PEDAL_DEVICE", "PS3_WHEEL_BUTTON_DEVICE" };
++    static const char* const xkey[XD_COUNT] = { "PS3_WHEEL_PEDAL_DEVICE", "PS3_WHEEL_BUTTON_DEVICE",
++        "PS3_WHEEL_THROTTLE_DEVICE", "PS3_WHEEL_BRAKE_DEVICE", "PS3_WHEEL_CLUTCH_DEVICE" };
 +    for (int x = 0; x < XD_COUNT; x++) {
 +        s_xd[x].match[0] = 0;
++        s_xd[x].forced_wheel = 0;
 +        e = getenv(xkey[x]);
 +        if (!e) continue;
 +        while (*e == ' ') e++;   /* a name typed with spaces around it */
@@ -78951,7 +78972,10 @@ new file mode 100644
 +        size_t n = strlen(s_xd[x].match);
 +        while (n && s_xd[x].match[n - 1] == ' ') s_xd[x].match[--n] = 0;
 +        lower(s_xd[x].match);
-+        if (!strcmp(s_xd[x].match, "wheel")) s_xd[x].match[0] = 0;   /* "wheel": the wheel's own */
++        if (!strcmp(s_xd[x].match, "wheel")) {   /* "wheel": the wheel's own (for one pedal: even with a pedals' device) */
++            s_xd[x].match[0] = 0;
++            s_xd[x].forced_wheel = x >= XD_THROTTLE;
++        }
 +    }
 +}
 +
@@ -79234,6 +79258,10 @@ new file mode 100644
 +    } else {
 +        if (driving) c.score += 4;
 +        if (ff) c.score += 1;
++        /* Force feedback on anything but a gamepad is a wheel base nearly always: a MOZA R5 Base calls
++         * itself neither a driving device nor a wheel, and was passed over (a player, 24 Nov 2026). Pads'
++         * rumble isn't DirectInput force feedback, but a pad that has it is still no wheel. */
++        if (ff && GET_DIDEVICE_TYPE(di->dwDevType) != DI8DEVTYPE_GAMEPAD) c.score += 3;
 +        /* Some wheels call themselves a joystick and have no force feedback (the
 +         * Genius Speed Wheel 3 Vibration): "wheel" in the name is enough. */
 +        if (contains_ci(c.name, "wheel") || contains_ci(c.name, "driving force"))
@@ -79300,19 +79328,30 @@ new file mode 100644
 +    return DIENUM_CONTINUE;
 +}
 +
-+static void pedals_rest_points(const LONG* rest);
++static void pedals_decide(void);
 +
-+/* The pedals on their own device: the axes it has, in order, are throttle, brake and clutch unless
-+ * PS3_WHEEL_PEDALS names them. */
-+static void pedals_map_device(const XDev* d)
++/* The pedals read from device x, once it is open. Unless PS3_WHEEL_PEDALS names their axes: on the pedals'
++ * device the axes it has, in order, are throttle, brake and clutch (of those read from it); on one pedal's
++ * own device, its first axis. */
++static void pedals_map_device(int x)
 +{
-+    int n = 0;
-+    for (int p = 0; p < 3; p++) { s_map.pedal[p] = AX_NONE; s_map.pedal_inv[p] = -1; }
-+    for (int a = 0; a < AX_COUNT && n < 3; a++) if (d->axis_present[a]) s_map.pedal[n++] = a;
-+    pedals_override(&s_map);
-+    for (int p = 0; p < 3; p++)
++    const XDev* d = &s_xd[x];
++    int present[AX_COUNT], np = 0, rank = 0;
++    for (int a = 0; a < AX_COUNT; a++) if (d->axis_present[a]) present[np++] = a;
++    WheelMap tmp = s_map;
++    for (int p = 0; p < 3; p++) {
++        if (pedal_src(p) != x) continue;
++        const int k = x == XD_PEDALS ? rank++ : 0;
++        tmp.pedal[p] = k < np ? present[k] : AX_NONE;
++        tmp.pedal_inv[p] = -1;
++    }
++    pedals_override(&tmp);
++    for (int p = 0; p < 3; p++) {
++        if (pedal_src(p) != x) continue;
++        s_map.pedal[p] = tmp.pedal[p];
++        s_map.pedal_inv[p] = tmp.pedal_inv[p];
 +        if (s_map.pedal[p] >= 0 && !d->axis_present[s_map.pedal[p]]) s_map.pedal[p] = AX_NONE;
-+    s_split = 0;
++    }
 +}
 +
 +static void xd_close(int x, const char* why)
@@ -79326,8 +79365,8 @@ new file mode 100644
 +    d->rest_known = 0;
 +    d->fail_since = 0;
 +    if (x == XD_BUTTONS) s_has_hat = s_base_has_hat;
-+    if (x == XD_PEDALS) for (int p = 0; p < 3; p++) s_map.pedal[p] = AX_NONE;   /* released until it's back */
-+    fprintf(stderr, "[wheel] %s: the %s' \"%s\" closed\n", why, d->what, d->name);
++    for (int p = 0; p < 3; p++) if (pedal_src(p) == x) s_map.pedal[p] = AX_NONE;   /* released until it's back */
++    fprintf(stderr, "[wheel] %s: the device for the %s (\"%s\") closed\n", why, d->what, d->name);
 +}
 +
 +static int xd_open(int x)
@@ -79355,14 +79394,17 @@ new file mode 100644
 +    char axes[64] = ""; int n = 0;
 +    for (int a = 0; a < AX_COUNT; a++)
 +        if (d->axis_present[a] && n < (int)sizeof axes - 5) n += snprintf(axes + n, sizeof axes - (size_t)n, " %s", k_axis_name[a]);
-+    if (x == XD_PEDALS) {
-+        pedals_map_device(d);
-+        fprintf(stderr, "[wheel] pedals from \"%s\" (%04X:%04X), axes%s: throttle %s, brake %s, clutch %s "
++    if (xd_is_pedal(x)) {
++        pedals_map_device(x);
++        static const char* const pn[3] = { "throttle", "brake", "clutch" };
++        char which[96] = ""; int m = 0;
++        for (int p = 0; p < 3; p++)
++            if (pedal_src(p) == x && m < (int)sizeof which - 24)
++                m += snprintf(which + m, sizeof which - (size_t)m, "%s%s %s", m ? ", " : "", pn[p],
++                              s_map.pedal[p] >= 0 ? k_axis_name[s_map.pedal[p]] : "none");
++        fprintf(stderr, "[wheel] %s from \"%s\" (%04X:%04X), axes%s: %s "
 +                        "(PS3_WHEEL_PEDALS=throttle=<axis>,... or the in-game menu's wheel page changes them)\n",
-+                d->name, d->vid, d->pid, n ? axes : " none",
-+                s_map.pedal[0] >= 0 ? k_axis_name[s_map.pedal[0]] : "none",
-+                s_map.pedal[1] >= 0 ? k_axis_name[s_map.pedal[1]] : "none",
-+                s_map.pedal[2] >= 0 ? k_axis_name[s_map.pedal[2]] : "none");
++                x == XD_PEDALS ? "pedals" : d->what, d->name, d->vid, d->pid, n ? axes : " none", m ? which : "no pedal");
 +    } else {
 +        if (d->has_hat) s_has_hat = 1;
 +        fprintf(stderr, "[wheel] buttons from \"%s\" (%04X:%04X): %lu buttons, %s; PS3_WHEEL_BUTTONS numbers are its own\n",
@@ -79387,10 +79429,10 @@ new file mode 100644
 +        if (xd_open(x)) return;
 +        if (!d->said_missing) {
 +            d->said_missing = 1;
-+            fprintf(stderr, "[wheel] the %s' device \"%s\" isn't connected: %s until it is (looked for every few seconds)\n",
-+                    d->what, d->match, x == XD_PEDALS ? "the pedals read released" : "no buttons");
-+            gt5_menu_notice(GT5_NOTICE_WHEEL, x == XD_PEDALS ? "Pedals not found" : "Wheel buttons not found",
-+                            x == XD_PEDALS ? "未找到踏板" : "未找到方向盘按钮", 8000);
++            fprintf(stderr, "[wheel] the device for the %s (\"%s\") isn't connected: %s until it is (looked for every few seconds)\n",
++                    d->what, d->match, xd_is_pedal(x) ? "its pedals read released" : "no buttons");
++            gt5_menu_notice(GT5_NOTICE_WHEEL, xd_is_pedal(x) ? "Pedals not found" : "Wheel buttons not found",
++                            xd_is_pedal(x) ? "未找到踏板" : "未找到方向盘按钮", 8000);
 +        }
 +        return;
 +    }
@@ -79413,7 +79455,7 @@ new file mode 100644
 +        }
 +    }
 +    d->ok = d->last_good && now - d->last_good < 50;
-+    if (x != XD_PEDALS || d->rest_known || !d->ok) return;
++    if (!xd_is_pedal(x) || d->rest_known || !d->ok) return;
 +    /* Rest points, as for the wheel: not from DirectInput's "middle of every axis" before the first
 +     * report, and kept when the same pedals come back (a pedal held then would become "rest"). */
 +    int fresh = 0;
@@ -79431,15 +79473,18 @@ new file mode 100644
 +    }
 +    d->rest_known = 1;
 +    d->rest_have = 1; d->rest_vid = d->vid; d->rest_pid = d->pid;
-+    fprintf(stderr, reuse ? "[wheel] pedals back: keeping their rest points (0-65535):%s\n"
-+                          : "[wheel] pedals at rest (0-65535):%s\n", n ? line : " none");
-+    pedals_rest_points(d->rest);
++    fprintf(stderr, reuse ? "[wheel] the device for the %s is back: keeping its rest points (0-65535):%s\n"
++                          : "[wheel] the device for the %s at rest (0-65535):%s\n", d->what, n ? line : " none");
++    pedals_decide();
 +}
 +
 +static void fx_release_all(void);
 +
++static void probe_close(void);
++
 +static void dev_close(const char* why)
 +{
++    probe_close();
 +    for (int x = 0; x < XD_COUNT; x++) xd_close(x, why);
 +    if (!s_dev) return;
 +    fx_release_all();
@@ -79518,8 +79563,8 @@ new file mode 100644
 +    build_map(&s_map, s_vid, s_pid);
 +    for (int p = 0; p < 3; p++)
 +        if (s_map.pedal[p] >= 0 && !s_axis_present[s_map.pedal[p]]) s_map.pedal[p] = AX_NONE;
-+    /* Pedals on a device of their own: none from the wheel's axes; xd_open maps that device's. */
-+    if (xd_separate(&s_xd[XD_PEDALS])) for (int p = 0; p < 3; p++) s_map.pedal[p] = AX_NONE;
++    /* A pedal on a device of its own: not from the wheel's axes; xd_open maps that device's. */
++    for (int p = 0; p < 3; p++) if (pedal_src(p) >= 0) s_map.pedal[p] = AX_NONE;
 +    s_rest_known = 0;
 +    s_rest_wait = 0;
 +    s_split = 0;
@@ -79534,13 +79579,13 @@ new file mode 100644
 +                s_map.pedal[1] >= 0 ? k_axis_name[s_map.pedal[1]] : "none",
 +                s_map.pedal[2] >= 0 ? k_axis_name[s_map.pedal[2]] : "none",
 +                (unsigned long)caps.dwButtons, s_has_hat ? "a d-pad" : "no d-pad");
++        static const char* const xkey[XD_COUNT] = { "PS3_WHEEL_PEDAL_DEVICE", "PS3_WHEEL_BUTTON_DEVICE",
++            "PS3_WHEEL_THROTTLE_DEVICE", "PS3_WHEEL_BRAKE_DEVICE", "PS3_WHEEL_CLUTCH_DEVICE" };
 +        for (int x = 0; x < XD_COUNT; x++) {
 +            if (xd_separate(&s_xd[x]))
-+                fprintf(stderr, "[wheel] the %s come from the device \"%s\" (%s)\n", s_xd[x].what, s_xd[x].match,
-+                        x == XD_PEDALS ? "PS3_WHEEL_PEDAL_DEVICE" : "PS3_WHEEL_BUTTON_DEVICE");
-+            else if (s_xd[x].match[0])
-+                fprintf(stderr, "[wheel] \"%s\" for the %s is this wheel: its own %s are used\n", s_xd[x].match,
-+                        s_xd[x].what, s_xd[x].what);
++                fprintf(stderr, "[wheel] the %s: read from the device \"%s\" (%s)\n", s_xd[x].what, s_xd[x].match, xkey[x]);
++            else if (s_xd[x].match[0] || s_xd[x].forced_wheel)
++                fprintf(stderr, "[wheel] the %s: the wheel's own (%s)\n", s_xd[x].what, xkey[x]);
 +        }
 +        static const char* const pn[3] = { "throttle", "brake", "clutch" };
 +        for (int p = 0; p < 3; p++)
@@ -79601,39 +79646,54 @@ new file mode 100644
 +    return f < 0.f ? 0.f : (f > 1.f ? 1.f : f);
 +}
 +
-+/* Once the pedals' device's rest points are known (the wheel's, or the pedals' own). */
-+static void pedals_rest_points(const LONG* rest)
++/* The rest points of where pedal p is read from (the wheel, or a device of its own), NULL until known. */
++static const LONG* pedal_rest(int p)
++{
++    const int src = pedal_src(p);
++    if (src < 0) return s_rest_known ? s_rest : NULL;
++    return s_xd[src].rest_known ? s_xd[src].rest : NULL;
++}
++
++/* Each time the rest points of a device the pedals are read from become known. */
++static void pedals_decide(void)
 +{
 +    /* Older wheels (the Genius Speed Wheel 3, for one) put both pedals on one
 +     * axis that rests in the middle, one pedal moving it down and the other up,
 +     * with no brake axis. Read as one pedal, resting there would be half
-+     * throttle: split it where it rests instead. */
-+#define REST_MID(a) ((a) >= 0 && rest[a] >= 6554 && rest[a] <= 58981)
++     * throttle: split it where it rests instead. Only throttle and brake on one device can share an axis. */
++#define REST_MID(r, a) ((r) && (a) >= 0 && (r)[a] >= 6554 && (r)[a] <= 58981)
++    const LONG* rt = pedal_rest(0);
++    const LONG* rc = pedal_rest(2);
++    const int same = pedal_src(0) == pedal_src(1);
 +    const int ta = s_map.pedal[0], ba = s_map.pedal[1], ca = s_map.pedal[2];
 +    int sa = AX_NONE;
++    const int was = s_split;
 +    s_split = 0;
-+    if (ta >= 0 && (ba == ta || (ba == AX_NONE && REST_MID(ta)))) sa = ta;
-+    /* A pedal rests at one end of its axis, so a throttle axis and a brake axis that both
-+     * rest in the middle aren't two pedals: Thrustmaster's "combined" mode puts both on Y
-+     * (the other axis sits in the middle unused; read as a pedal it was a brake held half
-+     * down, a player's T-GT, 15 Nov 2026). Split Y, as for the older wheels. */
-+    else if (REST_MID(ta) && REST_MID(ba)) sa = (ta == AX_Y || ba == AX_Y) ? AX_Y : ta;
++    if (same && rt) {
++        if (ta >= 0 && (ba == ta || (ba == AX_NONE && REST_MID(rt, ta)))) sa = ta;
++        /* A pedal rests at one end of its axis, so a throttle axis and a brake axis that both
++         * rest in the middle aren't two pedals: Thrustmaster's "combined" mode puts both on Y
++         * (the other axis sits in the middle unused; read as a pedal it was a brake held half
++         * down, a player's T-GT, 15 Nov 2026). Split Y, as for the older wheels. */
++        else if (REST_MID(rt, ta) && REST_MID(rt, ba)) sa = (ta == AX_Y || ba == AX_Y) ? AX_Y : ta;
++    }
 +    if (sa >= 0) {
 +        s_split = 1;
 +        /* Where it rests, unless that is far from the middle: the first reading can come
 +         * with a pedal already moving. */
-+        s_split_at = labs(rest[sa] - 32768) <= 6554 ? rest[sa] : 32768;
++        s_split_at = labs(rt[sa] - 32768) <= 6554 ? rt[sa] : 32768;
 +        s_split_swap = (s_map.pedal_inv[0] == 2) != (s_map.pedal_inv[1] == 2);
 +        s_map.pedal[0] = s_map.pedal[1] = sa;
-+        fprintf(stderr, "[wheel] throttle and brake share the %s axis, split at %ld: throttle %s it, "
-+                        "brake %s (PS3_WHEEL_PEDALS=throttle=%s%s,brake=%s swaps them)\n",
-+                k_axis_name[sa], s_split_at, s_split_swap ? "above" : "below",
-+                s_split_swap ? "below" : "above", k_axis_name[sa], s_split_swap ? "" : "inv",
-+                k_axis_name[sa]);
++        if (!was)
++            fprintf(stderr, "[wheel] throttle and brake share the %s axis, split at %ld: throttle %s it, "
++                            "brake %s (PS3_WHEEL_PEDALS=throttle=%s%s,brake=%s swaps them)\n",
++                    k_axis_name[sa], s_split_at, s_split_swap ? "above" : "below",
++                    s_split_swap ? "below" : "above", k_axis_name[sa], s_split_swap ? "" : "inv",
++                    k_axis_name[sa]);
 +    }
 +    /* The same for the clutch: an axis resting in the middle is no clutch pedal (half down
 +     * would slip it in a manual car). */
-+    if (REST_MID(ca) && ca != sa) {
++    if (REST_MID(rc, ca) && !(ca == sa && pedal_src(2) == pedal_src(0))) {
 +        fprintf(stderr, "[wheel] %s rests in the middle, so it is no clutch pedal: no clutch "
 +                        "(PS3_WHEEL_PEDALS=clutch=<axis> names the clutch's axis)\n", k_axis_name[ca]);
 +        s_map.pedal[2] = AX_NONE;
@@ -79678,6 +79738,52 @@ new file mode 100644
 +    if (!dy) dy = in->throttle > 0.5f ? 1 : in->brake > 0.5f ? -1 : 0;
 +    /* One direction at a time: a diagonal moves some menus nowhere. */
 +    if (in->hat < 0 && (dx || dy)) in->hat = dy ? hat_from(0, dy) : hat_from(dx, 0);
++}
++
++/* ---- Every game controller, read while the in-game menu is open --------------------------------------
++ * The wheel page's "push the pedal down" takes the pedal from whichever device moved (a player's brake is
++ * one USB device, his throttle and clutch another, 24 Nov 2026): while the menu is open every game controller
++ * found is opened too (read only, never held) and its axes go to the menu with its name. Closed with the menu. */
++static LPDIRECTINPUTDEVICE8W s_probe[GT5_MENU_WHEEL_DEVICES];
++static char s_probe_name[GT5_MENU_WHEEL_DEVICES][64];
++static int  s_probe_n, s_probe_on, s_probe_base = -1;
++typedef struct { GUID g[GT5_MENU_WHEEL_DEVICES]; char n[GT5_MENU_WHEEL_DEVICES][64]; int count; } ProbeList;
++
++static BOOL CALLBACK probe_cb(LPCDIDEVICEINSTANCEW di, LPVOID ctx)
++{
++    ProbeList* l = (ProbeList*)ctx;
++    if (l->count >= GT5_MENU_WHEEL_DEVICES) return DIENUM_STOP;
++    l->g[l->count] = di->guidInstance;
++    utf8(di->tszProductName, l->n[l->count], sizeof l->n[0]);
++    l->count++;
++    return DIENUM_CONTINUE;
++}
++
++static void probe_close(void)
++{
++    for (int i = 0; i < s_probe_n; i++)
++        if (s_probe[i]) { IDirectInputDevice8_Unacquire(s_probe[i]); IDirectInputDevice8_Release(s_probe[i]); s_probe[i] = NULL; }
++    s_probe_n = 0; s_probe_on = 0; s_probe_base = -1;
++}
++
++static void probe_open(void)
++{
++    ProbeList l; memset(&l, 0, sizeof l);
++    s_probe_on = 1; s_probe_n = 0; s_probe_base = -1;
++    if (FAILED(IDirectInput8_EnumDevices(s_di, DI8DEVCLASS_GAMECTRL, probe_cb, &l, DIEDFL_ATTACHEDONLY))) return;
++    for (int i = 0; i < l.count; i++) {
++        snprintf(s_probe_name[i], sizeof s_probe_name[i], "%s", l.n[i]);
++        s_probe[i] = NULL;
++        if (s_dev && !memcmp(&l.g[i], &s_inst, sizeof(GUID))) { s_probe_base = i; continue; }   /* the wheel: its own reading */
++        LPDIRECTINPUTDEVICE8W d = NULL;
++        if (FAILED(IDirectInput8_CreateDevice(s_di, &l.g[i], &d, NULL)) || !d) continue;
++        IDirectInputDevice8_SetDataFormat(d, &c_dfDIJoystick2);
++        IDirectInputDevice8_SetCooperativeLevel(d, s_hwnd, DISCL_NONEXCLUSIVE | DISCL_BACKGROUND);
++        dev_full_range(d);
++        IDirectInputDevice8_Acquire(d);
++        s_probe[i] = d;
++    }
++    s_probe_n = l.count;
 +}
 +
 +static void dev_poll(void)
@@ -79754,7 +79860,7 @@ new file mode 100644
 +        fprintf(stderr, reuse ? "[wheel] back: keeping the rest points measured before (0-65535):%s\n"
 +                              : "[wheel] axes at rest (0-65535):%s\n", n ? line : " none");
 +        /* The pedals' own device measures its rest points itself (xd_poll). */
-+        if (!xd_separate(&s_xd[XD_PEDALS])) pedals_rest_points(s_rest);
++        pedals_decide();
 +        if (!wheel_trace_on())
 +            fprintf(stderr, "[wheel] if a pedal or button is wrong, PS3_WHEEL_TRACE=1 logs them as they move\n");
 +    }
@@ -79767,13 +79873,12 @@ new file mode 100644
 +    const XDev* const pd = &s_xd[XD_PEDALS];
 +    const XDev* const bd = &s_xd[XD_BUTTONS];
 +    const DIJOYSTATE2* pjs = &js;
-+    const LONG* prest = s_rest;
-+    int prest_known = s_rest_known;
-+    if (xd_separate(pd)) { pjs = pd->ok ? &pd->js : NULL; prest = pd->rest; prest_known = pd->rest_known; }
++    if (xd_separate(pd)) pjs = pd->ok ? &pd->js : NULL;
 +    const DIJOYSTATE2* bjs = &js;
 +    if (xd_separate(bd)) bjs = bd->ok ? &bd->js : NULL;
 +    /* The in-game menu's wheel map ("press a button" / "push the pedal down"): the buttons and axes of
-+     * the devices they're read from, while the menu is open. */
++     * the devices they're read from, and every game controller's axes with its name (a pedal is taken
++     * from whichever device moved), while the menu is open. */
 +    if (gt5_menu_is_open()) {
 +        gt5_menu_wheel mw;
 +        memset(&mw, 0, sizeof mw);
@@ -79781,16 +79886,45 @@ new file mode 100644
 +        snprintf(mw.name, sizeof mw.name, "%s", s_name);
 +        if (bjs) for (int i = 0; i < 64; i++) mw.button[i] = (unsigned char)(bjs->rgbButtons[i] >> 7);
 +        if (pjs) for (int a = 0; a < AX_COUNT && a < 8; a++) mw.axis[a] = (float)axis_val(pjs, a) / 65535.f;
-+        if (xd_separate(pd)) { snprintf(mw.pedals, sizeof mw.pedals, "%s", pd->dev ? pd->name : pd->match); mw.pedals_found = pd->dev != NULL; }
++        {   /* the pedals' devices: the pedals' one, then "brake: <name>" for a pedal on a device of its own */
++            int n = 0, all = 1;
++            for (int x = 0; x < XD_COUNT; x++) {
++                const XDev* d = &s_xd[x];
++                if (!xd_is_pedal(x) || !xd_separate(d) || n >= (int)sizeof mw.pedals - 8) continue;
++                n += snprintf(mw.pedals + n, sizeof mw.pedals - (size_t)n, "%s%s%s%s", n ? "; " : "",
++                              x == XD_PEDALS ? "" : d->what, x == XD_PEDALS ? "" : ": ", d->dev ? d->name : d->match);
++                if (!d->dev) all = 0;
++            }
++            mw.pedals_found = (unsigned char)all;
++        }
 +        if (xd_separate(bd)) { snprintf(mw.buttons, sizeof mw.buttons, "%s", bd->dev ? bd->name : bd->match); mw.buttons_found = bd->dev != NULL; }
-+        mw.devices = s_devlist_n;
-+        for (int i = 0; i < s_devlist_n; i++) snprintf(mw.device[i], sizeof mw.device[i], "%s", s_devlist[i]);
++        if (!s_probe_on) probe_open();
++        mw.devices = s_probe_n;
++        for (int i = 0; i < s_probe_n; i++) {
++            snprintf(mw.device[i], sizeof mw.device[i], "%s", s_probe_name[i]);
++            const DIJOYSTATE2* dj = NULL;
++            DIJOYSTATE2 pj;
++            if (i == s_probe_base) dj = &js;
++            else if (s_probe[i]) {
++                if (FAILED(IDirectInputDevice8_Poll(s_probe[i]))) IDirectInputDevice8_Acquire(s_probe[i]);
++                if (SUCCEEDED(IDirectInputDevice8_GetDeviceState(s_probe[i], sizeof pj, &pj))) dj = &pj;
++            }
++            if (dj) {
++                mw.device_read[i] = 1;
++                for (int a = 0; a < AX_COUNT && a < 8; a++) mw.device_axis[i][a] = (float)axis_val(dj, a) / 65535.f;
++            }
++        }
 +        gt5_menu_feed_wheel(&mw);
-+    }
++    } else if (s_probe_on) probe_close();
 +    in.steer = ((float)axis_val(&js, s_map.steer) - 32767.5f) / 32767.5f;
-+    in.throttle = pedal(pjs, prest, prest_known, 0);
-+    in.brake = pedal(pjs, prest, prest_known, 1);
-+    in.clutch = pedal(pjs, prest, prest_known, 2);
++    {   /* each pedal from where it is read: the wheel, the pedals' device, or a device of its own */
++        float* const pedv[3] = { &in.throttle, &in.brake, &in.clutch };
++        for (int p = 0; p < 3; p++) {
++            const int src = pedal_src(p);
++            if (src < 0) *pedv[p] = pedal(&js, s_rest, s_rest_known, p);
++            else { const XDev* d = &s_xd[src]; *pedv[p] = pedal(d->ok ? &d->js : NULL, d->rest, d->rest_known, p); }
++        }
++    }
 +    /* The d-pad: the buttons' device's hat when it has one, else the wheel's. */
 +    const DIJOYSTATE2* hjs = (xd_separate(bd) && bd->has_hat) ? bjs : &js;
 +    const DWORD pov = hjs ? hjs->rgdwPOV[0] : 0xFFFFFFFFu;
@@ -79821,20 +79955,25 @@ new file mode 100644
 +    publish(&in);
 +
 +    if (wheel_trace_on()) {
-+        static LONG last[AX_COUNT], plast[AX_COUNT]; static DWORD last_b; static unsigned lines;
-+        const int pown = xd_separate(pd) && pjs;   /* the pedals' own device's axes, printed too */
++        static LONG last[AX_COUNT], plast[XD_COUNT][AX_COUNT]; static DWORD last_b; static unsigned lines;
 +        int moved = 0;
 +        for (int a = 0; a < AX_COUNT; a++) if (labs(axis_val(&js, a) - last[a]) > 2000) moved = 1;
-+        if (pown) for (int a = 0; a < AX_COUNT; a++) if (labs(axis_val(pjs, a) - plast[a]) > 2000) moved = 1;
++        /* the pedals' devices' axes, printed too */
++        for (int x = 0; x < XD_COUNT; x++)
++            if (xd_is_pedal(x) && xd_separate(&s_xd[x]) && s_xd[x].ok)
++                for (int a = 0; a < AX_COUNT; a++) if (labs(axis_val(&s_xd[x].js, a) - plast[x][a]) > 2000) moved = 1;
 +        if ((moved || in.buttons != last_b) && lines < 3000) {
 +            lines++;
 +            for (int a = 0; a < AX_COUNT; a++) last[a] = axis_val(&js, a);
-+            if (pown) for (int a = 0; a < AX_COUNT; a++) plast[a] = axis_val(pjs, a);
 +            last_b = in.buttons;
-+            char pax[160] = "";
-+            if (pown)
-+                snprintf(pax, sizeof pax, " | pedals' device X=%ld Y=%ld Z=%ld RX=%ld RY=%ld RZ=%ld S0=%ld S1=%ld",
-+                         pjs->lX, pjs->lY, pjs->lZ, pjs->lRx, pjs->lRy, pjs->lRz, pjs->rglSlider[0], pjs->rglSlider[1]);
++            char pax[480] = ""; int pn = 0;
++            for (int x = 0; x < XD_COUNT; x++) {
++                const XDev* d = &s_xd[x];
++                if (!xd_is_pedal(x) || !xd_separate(d) || !d->ok || pn >= (int)sizeof pax - 120) continue;
++                for (int a = 0; a < AX_COUNT; a++) plast[x][a] = axis_val(&d->js, a);
++                pn += snprintf(pax + pn, sizeof pax - (size_t)pn, " | %s' device X=%ld Y=%ld Z=%ld RX=%ld RY=%ld RZ=%ld S0=%ld S1=%ld",
++                               d->what, d->js.lX, d->js.lY, d->js.lZ, d->js.lRx, d->js.lRy, d->js.lRz, d->js.rglSlider[0], d->js.rglSlider[1]);
++            }
 +            fprintf(stderr, "[wheel] axes X=%ld Y=%ld Z=%ld RX=%ld RY=%ld RZ=%ld S0=%ld S1=%ld%s"
 +                            " -> steer %.2f thr %.2f brk %.2f clu %.2f btn %06X hat %d\n",
 +                    js.lX, js.lY, js.lZ, js.lRx, js.lRy, js.lRz, js.rglSlider[0], js.rglSlider[1], pax,
@@ -80624,7 +80763,7 @@ diff --git a/runtime/settings/gt5_menu.h b/runtime/settings/gt5_menu.h
 new file mode 100644
 --- /dev/null
 +++ b/runtime/settings/gt5_menu.h
-@@ -0,0 +1,210 @@
+@@ -0,0 +1,214 @@
 +/*
 + * gt5_menu - the in-game settings menu of the GT5 PC port (Dear ImGui on Direct3D 12 and Vulkan).
 + *
@@ -80708,6 +80847,10 @@ new file mode 100644
 +    unsigned char pedals_found, buttons_found;   /* that device is connected */
 +    int           devices;         /* every game controller found, for "Pedals from" / "Buttons from" */
 +    char          device[GT5_MENU_WHEEL_DEVICES][64];
++    /* each of those devices' axes (X Y Z RX RY RZ S0 S1, 0..1) while the menu is open, when it could be read:
++     * "push the pedal down" takes the pedal from whichever device moved */
++    float         device_axis[GT5_MENU_WHEEL_DEVICES][8];
++    unsigned char device_read[GT5_MENU_WHEEL_DEVICES];
 +} gt5_menu_wheel;
 +void gt5_menu_feed_wheel(const gt5_menu_wheel* wheel);
 +
@@ -80839,7 +80982,7 @@ diff --git a/runtime/settings/gt5_settings_table.h b/runtime/settings/gt5_settin
 new file mode 100644
 --- /dev/null
 +++ b/runtime/settings/gt5_settings_table.h
-@@ -0,0 +1,536 @@
+@@ -0,0 +1,553 @@
 +/*
 + * gt5_settings_table.h - every setting of the GT5 PC port, in the order the in-game menu shows them.
 + * Included once, by gt5_settings.c. UTF-8.
@@ -81264,6 +81407,23 @@ new file mode 100644
 +
 +    { "PS3_WHEEL_BUTTON_DEVICE", GT5_SET_STRING, NEXT, GT5_PAGE_CONTROLS, GT5_SF_NO_ROW, "",
 +      "Buttons from", "按钮来自",
++      NULL, NULL,
++      NULL, NULL, 0, 0, 0, 0, NULL, NULL, 0 },
++
++    /* One pedal on a device of its own ("wheel": the wheel's, whatever PS3_WHEEL_PEDAL_DEVICE says). The wheel
++     * page's pedal rows set them to the device the pedal was pushed on. */
++    { "PS3_WHEEL_THROTTLE_DEVICE", GT5_SET_STRING, NEXT, GT5_PAGE_CONTROLS, GT5_SF_NO_ROW, "",
++      "Throttle from", "油门来自",
++      NULL, NULL,
++      NULL, NULL, 0, 0, 0, 0, NULL, NULL, 0 },
++
++    { "PS3_WHEEL_BRAKE_DEVICE", GT5_SET_STRING, NEXT, GT5_PAGE_CONTROLS, GT5_SF_NO_ROW, "",
++      "Brake from", "刹车来自",
++      NULL, NULL,
++      NULL, NULL, 0, 0, 0, 0, NULL, NULL, 0 },
++
++    { "PS3_WHEEL_CLUTCH_DEVICE", GT5_SET_STRING, NEXT, GT5_PAGE_CONTROLS, GT5_SF_NO_ROW, "",
++      "Clutch from", "离合来自",
 +      NULL, NULL,
 +      NULL, NULL, 0, 0, 0, 0, NULL, NULL, 0 },
 +

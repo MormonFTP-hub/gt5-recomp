@@ -6,6 +6,7 @@ the launcher's Updates page shows the newest one's notes.
 
 | Version | Date | What changed |
 |---|---|---|
+| [v0.1.113](https://github.com/MormonFTP-hub/gt5-recomp/releases/tag/v0.1.113) | 24 Nov 2026 | Wheels: each pedal can be on a device of its own (the in-game menu takes a pedal from whichever device you push it on); wheel bases that don't call themselves a wheel are found by themselves |
 | [v0.1.112](https://github.com/MormonFTP-hub/gt5-recomp/releases/tag/v0.1.112) | 23 Nov 2026 | Pick the game's version in the launcher (Help > Game version and DLC): 1.00 to 2.17 from Sony's own updates, checked; Install .pkg says plainly when earlier updates are missing |
 | [v0.1.111](https://github.com/MormonFTP-hub/gt5-recomp/releases/tag/v0.1.111) | 23 Nov 2026 | All SPU code converted and the first native geometry jobs, shorter loading stalls, a batch of speed and stability fixes, Master Mod installer, wheels with separate pedals, save folder fix |
 | [v0.1.110](https://github.com/MormonFTP-hub/gt5-recomp/releases/tag/v0.1.110) | 22 Nov 2026 | Installing game updates (.pkg) finds RPCS3 next to the packages or gets it itself; README: where saves are and how to bring one over from RPCS3 |

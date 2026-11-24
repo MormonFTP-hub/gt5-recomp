@@ -1041,19 +1041,42 @@ void wheel_screen(const PadEdges& pad)
         for (int i = 0; i < (int)sizeof w.button; i++)
             if (w.button[i] && !ui.bind_wheel0.button[i]) { ui.wheel.btn[ui.bind_row] = i + 1; bind_cancel(); save_wheel(); break; }
     }
+    // A pedal is taken from whichever game controller moved, and that device is kept for it (a player's brake is one
+    // USB device, his throttle and clutch another): every controller's axes come with the wheel (wheel_host_win.c).
+    static const char* const pedal_dev_key[3] = { "PS3_WHEEL_THROTTLE_DEVICE", "PS3_WHEEL_BRAKE_DEVICE", "PS3_WHEEL_CLUTCH_DEVICE" };
     if (ui.bind == BIND_WHEEL_PEDAL && have) {
-        for (int a = 0; a < GT5_WHEEL_AXES; a++)
-            if (fabsf(w.axis[a] - ui.bind_wheel0.axis[a]) > 0.5f) { ui.wheel.pedal_axis[ui.bind_row] = a; bind_cancel(); save_wheel(); break; }
+        bool got = false;
+        for (int i = 0; i < w.devices && i < GT5_MENU_WHEEL_DEVICES && !got; i++) {
+            if (!w.device_read[i] || !ui.bind_wheel0.device_read[i] || strcmp(w.device[i], ui.bind_wheel0.device[i])) continue;
+            for (int a = 0; a < GT5_WHEEL_AXES; a++) {
+                if (fabsf(w.device_axis[i][a] - ui.bind_wheel0.device_axis[i][a]) <= 0.5f) continue;
+                ui.wheel.pedal_axis[ui.bind_row] = a;
+                // the wheel itself: "wheel"; the pedals' device (Pedals from): nothing of its own; else that device
+                char all[128];
+                gt5_setting_stored("PS3_WHEEL_PEDAL_DEVICE", all, sizeof all);
+                const char* dev = !_stricmp(w.device[i], w.name) ? "wheel" : (all[0] && contains_nocase(w.device[i], all)) ? "" : w.device[i];
+                gt5_setting_set(pedal_dev_key[ui.bind_row], dev);
+                got = true;
+                break;
+            }
+        }
+        if (!got)   // no list of controllers: the pedals' device's axes, as before
+            for (int a = 0; a < GT5_WHEEL_AXES; a++)
+                if (fabsf(w.axis[a] - ui.bind_wheel0.axis[a]) > 0.5f) { ui.wheel.pedal_axis[ui.bind_row] = a; got = true; break; }
+        if (got) { bind_cancel(); save_wheel(); }
     }
 
     // the values, for the columns
-    char pedal_val[3][64], btn_val[GT5_WHEEL_BUTTONS][64];
+    char pedal_val[3][128], btn_val[GT5_WHEEL_BUTTONS][64];
     float max_a = 0, max_c = ImGui::CalcTextSize(T("Press a button on the wheel...", "请按下方向盘上的按钮...")).x;
     for (int p = 0; p < 3; p++) {
         const int a = ui.wheel.pedal_axis[p];
+        char dev[96];
+        gt5_setting_stored(pedal_dev_key[p], dev, sizeof dev);
         if (a == -2) snprintf(pedal_val[p], sizeof pedal_val[p], "%s", T("As the wheel has it", "按方向盘默认"));
         else if (a == -1) snprintf(pedal_val[p], sizeof pedal_val[p], "%s", T("None", "无"));
-        else snprintf(pedal_val[p], sizeof pedal_val[p], "%s %s%s", T("Axis", "轴"), gt5_wheel_axis(a), ui.wheel.pedal_inv[p] ? T(", reversed", "，反向") : "");
+        else snprintf(pedal_val[p], sizeof pedal_val[p], "%s %s%s%s%s", T("Axis", "轴"), gt5_wheel_axis(a), ui.wheel.pedal_inv[p] ? T(", reversed", "，反向") : "",
+                      dev[0] && _stricmp(dev, "wheel") ? "  ·  " : "", dev[0] && _stricmp(dev, "wheel") ? dev : "");
         const float wa = ImGui::CalcTextSize(gt5_wheel_pedal_label(p, ui.zh)).x, wc = ImGui::CalcTextSize(pedal_val[p]).x;
         if (wa > max_a) max_a = wa;
         if (wc > max_c) max_c = wc;
@@ -1080,7 +1103,7 @@ void wheel_screen(const PadEdges& pad)
         if (ui.bind == BIND_NONE) {
             if (pressed && have) bind_begin(BIND_WHEEL_PEDAL, p, false);
             else if (rclick || (focused && (pad.square || ImGui::IsKeyPressed(ImGuiKey_Insert, false)))) { if (a >= 0) { ui.wheel.pedal_inv[p] = !ui.wheel.pedal_inv[p]; save_wheel(); } }
-            else if (focused && (pad.triangle || ImGui::IsKeyPressed(ImGuiKey_Delete, false))) { ui.wheel.pedal_axis[p] = -2; ui.wheel.pedal_inv[p] = 0; save_wheel(); }
+            else if (focused && (pad.triangle || ImGui::IsKeyPressed(ImGuiKey_Delete, false))) { ui.wheel.pedal_axis[p] = -2; ui.wheel.pedal_inv[p] = 0; gt5_setting_set(pedal_dev_key[p], ""); save_wheel(); }
         }
         if (focused) set_help_text(help);
     }
