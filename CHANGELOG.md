@@ -9,6 +9,16 @@ release on the tested rig in [STATUS.md](STATUS.md) unless a day says otherwise.
 
 ## 23 Nov 2026
 
+🏷️ Released as **v0.1.112**
+
+🔢 **Pick the game's version in the launcher** (Help > Game version and DLC): 1.00 to 2.17, or 2.11 for the Master Mod, with Sony's own updates downloaded and checked for you
+
+- **Pick the game's version in the launcher**: *Help > Game version and DLC* shows the version the game is at and changes it to any other: 1.00 (the disc), any official update up to 2.17, or 2.11 for the Master Mod (asked for on Discord). How to: README, [Game version](README.md#game-version).
+  - The updates come straight from Sony's update server, the packages a PS3 or RPCS3 gets. Each one is used only when its size and SHA-1 are the ones in Sony's own list (`GT5\scripts\gt5_updates.txt`, read over HTTPS checked against the Sony root certificates in the PS3's own firmware), so the plain-HTTP download can't be swapped for anything else.
+  - Then they're installed through the install's own RPCS3 (`tools\rpcs3`, never yours) and the game is built for that version, as after Install .pkg. Going back installs from 1.05 again; 1.00 removes the update data. The installed data and executable are set aside first and put back if anything fails. Downloads are kept in `downloads\game-updates`.
+  - Not while a game mod is installed. Europe, North America, Asia and Japan.
+  - DLC is bought content and can't be downloaded: the window's *Install DLC (.pkg)* button takes the packages you have, as before.
+
 🏷️ Released as **v0.1.111**
 
 Everything from test builds 26 to 33 in one release. The update converts the game code again once and

@@ -191,6 +191,29 @@ function Installed-Ver([string]$title) {
 }
 function Count-Files([string]$dir) { return @(Get-ChildItem -LiteralPath $dir -Recurse -File -ErrorAction SilentlyContinue).Count }
 
+# ---- Updates go in order: a gap is said plainly before RPCS3 starts ---------------------------------------
+# RPCS3 refuses an update whose predecessor it doesn't have ("Update with version 02.01 is for version 02.00,
+# but you don't have any data installed": a player picked 2.01 to 2.11 without 1.05 to 2.00, 23 Nov 2026).
+# gt5_updates.txt lists every official update in order.
+$chainFile = Join-Path $PSScriptRoot "gt5_updates.txt"
+if (Test-Path $chainFile) {
+    $csv = @(Get-Content -LiteralPath $chainFile | Where-Object { $_ -and -not $_.StartsWith("#") } | ForEach-Object { ,($_.Split(",")) })
+    foreach ($t in $titles) {
+        $chain = @($csv | Where-Object { $_[0] -eq $t } | ForEach-Object { $_[1] } | Sort-Object { [double]$_ })
+        if (-not $chain) { continue }
+        $have = Installed-Ver $t
+        $given = @($pkgs | Where-Object { $_.IsUpdate -and $_.Title -eq $t -and (-not $have -or [double]$_.Ver -gt [double]$have) } | ForEach-Object Ver)
+        if (-not $given) { continue }
+        $missing = @($chain | Where-Object { (-not $have -or [double]$_ -gt [double]$have) -and [double]$_ -lt [double]$given[-1] -and $given -notcontains $_ })
+        if ($missing) {
+            $from = if ($have) { "RPCS3 has $t $have, so" } else { "Nothing of $t is installed yet, so" }
+            Say "Updates install only in order, one after the other. $from these are missing before $($given[-1]): $($missing -join ', ')." Yellow
+            Say "Pick those packages too (all of them from $($missing[0]) up to $($given[-1])), or use the launcher's Help > Game version and DLC, which downloads every update it needs from Sony." Yellow
+            Fail "Nothing was installed."
+        }
+    }
+}
+
 # ---- Install each package with RPCS3, answering its questions ---------------------------------------------
 Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes
 $A = [Windows.Automation.AutomationElement]
@@ -217,12 +240,13 @@ function Untick($scope) {
 }
 
 $failed = @()
+$updOk = 0   # updates RPCS3 has now (installed in this run, or already there)
 foreach ($k in $pkgs) {
     $name = [IO.Path]::GetFileName($k.File)
     $gameDir = Join-Path $hdd "game\$($k.Title)"
     if ($k.IsUpdate) {
         $have = Installed-Ver $k.Title
-        if ($have -and [double]$have -ge [double]$k.Ver) { Say "  update $($k.Ver): RPCS3 already has $have, skipped"; continue }
+        if ($have -and [double]$have -ge [double]$k.Ver) { Say "  update $($k.Ver): RPCS3 already has $have, skipped"; $updOk++; continue }
     }
     Say "Installing $name ..." White
     $before = Count-Files $gameDir
@@ -262,7 +286,7 @@ foreach ($k in $pkgs) {
         Start-Sleep -Milliseconds 700
     }
     if (-not $p.HasExited) { [void]$p.CloseMainWindow(); Start-Sleep -Seconds 4; if (-not $p.HasExited) { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue } }
-    if ($done) { Say "  installed$(if ($k.IsUpdate) { ": RPCS3 now has $($k.Title) $($k.Ver)" })" Green }
+    if ($done) { Say "  installed$(if ($k.IsUpdate) { ": RPCS3 now has $($k.Title) $($k.Ver)" })" Green; if ($k.IsUpdate) { $updOk++ } }
     else {
         $why = if ($err) { "RPCS3: $err" } elseif (-not $asked) { "RPCS3 didn't offer to install it (is it already open, or showing a first-start window?)" } else { "it didn't finish in $TimeoutMinutes minutes" }
         Say "  not installed: $why" Yellow
@@ -289,8 +313,9 @@ $code = $LASTEXITCODE
 
 Say ""
 if ($failed) { Say "Not installed: $($failed -join ', ')" Yellow }
+# Only when RPCS3 has an update now: with none installed nothing changed, and there is nothing to build.
 if ($code -eq 2) { Say "The update's data is in place, but its executable couldn't be unlocked (see above)." Yellow }
-elseif ($pkgs | Where-Object IsUpdate) { Say "Next: run setup.bat (or setup.ps1) once. It generates and builds the game for this version (about an hour)." Green }
+elseif ($updOk -gt 0) { Say "Next: run setup.bat (or setup.ps1) once. It generates and builds the game for this version (about an hour)." Green }
 if ($pkgs | Where-Object { -not $_.IsUpdate }) { Say "DLC: the vouchers are in place; each still needs its licence key in GT5\hdd0\home\00000001\exdata (README, DLC)." }
 if ($env:GT5_PKG_NOPAUSE -ne "1") { Read-Host "Press Enter to close" | Out-Null }
 exit $(if ($failed) { 1 } else { 0 })

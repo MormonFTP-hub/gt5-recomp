@@ -525,6 +525,32 @@ namespace Gt5Launcher
             { "pkg.norpcs3", new[] { "Unpacking packages needs RPCS3 (the PS3 emulator) on this PC. Install it from rpcs3.net, then try again.", "解包需要这台电脑上有 RPCS3（PS3 模拟器）。请从 rpcs3.net 安装后重试。" } },
             { "pkg.notpkg", new[] { "Those files aren't PS3 game packages.", "这些文件不是 PS3 游戏包。" } },
             { "pkg.some", new[] { "Some packages weren't installed. The log says which.", "部分安装包未能安装。详情见日志。" } },
+            { "pkg.order", new[] { "Updates install only in order, and some before these are missing (Details says which). Pick every update from 1.05 on, or use Help > Game version and DLC, which downloads them for you.", "更新只能按顺序安装，前面缺少一些更新（详情中列出）。请选择从 1.05 起的所有更新，或使用“帮助 > 游戏版本和 DLC”，它会为你下载。" } },
+            // The game's version (1.00 or an official update up to 2.17) and DLC: game_version.ps1, VersionForm
+            { "help.version", new[] { "Game version and DLC", "游戏版本和 DLC" } },
+            { "ver.title", new[] { "Changing the game version", "正在更改游戏版本" } },
+            { "ver.heading", new[] { "Game version", "游戏版本" } },
+            { "ver.yours", new[] { "Your game: {0} ({1}), version {2}", "你的游戏：{0}（{1}），版本 {2}" } },
+            { "ver.unknown", new[] { "The game's version couldn't be read (is the game installed?).", "无法读取游戏版本（游戏是否已安装？）。" } },
+            { "ver.to", new[] { "Change to", "更改为" } },
+            { "ver.disc", new[] { "{0} (the disc)", "{0}（光盘版）" } },
+            { "ver.mm", new[] { "{0} (the one the Master Mod needs)", "{0}（Master Mod 需要的版本）" } },
+            { "ver.newest", new[] { "{0} (the newest)", "{0}（最新）" } },
+            { "ver.same", new[] { "This is the version installed now.", "这是当前安装的版本。" } },
+            { "ver.modon", new[] { "A game mod is installed: remove it first (Help > Remove the game mod), then change the version.", "已安装游戏模组：请先移除（帮助 > 移除游戏模组），再更改版本。" } },
+            { "ver.to100", new[] { "The updates' data is removed and the game is built again for the disc's version (about 20 minutes).", "将移除更新数据，并为光盘版重新构建游戏（约 20 分钟）。" } },
+            { "ver.dl", new[] { "Downloads {0} MB of official updates from Sony and installs them, then builds the game for that version (about 20 minutes once they're downloaded).", "从 Sony 下载 {0} MB 官方更新并安装，然后为该版本构建游戏（下载完成后约 20 分钟）。" } },
+            { "ver.dl0", new[] { "The updates it needs are already downloaded: installs them, then builds the game for that version (about 20 minutes).", "所需更新已下载：安装后为该版本构建游戏（约 20 分钟）。" } },
+            { "ver.back", new[] { "Going back installs the updates from 1.05 on again.", "回退会从 1.05 起重新安装更新。" } },
+            { "ver.note", new[] { "Updates come straight from Sony's servers, the same ones a PS3 gets, and each is checked against Sony's list before it's used. Your saves aren't touched.", "更新直接来自 Sony 的服务器（与 PS3 获取的相同），使用前会按 Sony 的列表逐一校验。你的存档不会被改动。" } },
+            { "ver.dlc.head", new[] { "DLC", "DLC" } },
+            { "ver.dlc.text", new[] { "DLC is bought content, so it can't be downloaded here: install the packages you have. Each also needs its licence key (README, DLC).", "DLC 是付费内容，无法在这里下载：请安装你已有的安装包。每个 DLC 还需要对应的许可密钥（见 README 的 DLC 部分）。" } },
+            { "ver.dlc.btn", new[] { "Install DLC (.pkg)...", "安装 DLC（.pkg）..." } },
+            { "ver.change", new[] { "Change", "更改" } },
+            { "ver.done", new[] { "The game is at the version you chose.", "游戏已是你选择的版本。" } },
+            { "ver.notdone", new[] { "The version wasn't changed; the game is as it was. The log says why.", "版本未更改，游戏保持原样。详情见日志。" } },
+            { "ver.space", new[] { "There isn't enough free disk space for the updates (the log says how much is needed).", "磁盘空间不足，无法下载更新（日志中写明需要多少）。" } },
+            { "ver.net", new[] { "Downloading from Sony didn't work. Try again later: what's downloaded is kept.", "从 Sony 下载失败。请稍后再试：已下载的部分会保留。" } },
             // A game mod that comes as a zip of PDIPFS files (the GT5 Master Mod): install_mod.ps1
             { "help.mod", new[] { "Install a game mod (.zip)", "安装游戏模组（.zip）" } },
             { "help.modremove", new[] { "Remove the game mod", "移除游戏模组" } },
@@ -980,6 +1006,150 @@ namespace Gt5Launcher
             FlatStyle = FlatStyle.Flat; FlatAppearance.BorderSize = 0; Cursor = Cursors.Hand;
             FlatAppearance.MouseOverBackColor = hot; FlatAppearance.MouseDownBackColor = hot;
             Font = Look.F(10f, FontStyle.Regular); UseVisualStyleBackColor = false;
+        }
+    }
+
+    // ---- Game version and DLC (Help page) ------------------------------------------------------------------
+    // Which official update the game is at, and a change to another: 1.00 (the disc) up to 2.17. What the game is
+    // at now and the megabytes each version would still download come from game_version.ps1 -Show; the change
+    // itself is a job (RunVersion). DLC is the player's own packages, through the .pkg picker as before.
+    class VersionForm : Form
+    {
+        [DllImport("dwmapi.dll")] static extern int DwmSetWindowAttribute(IntPtr h, int attr, ref int v, int size);
+        public string Choice;          // "version", "dlc" or null
+        public string Version;         // "02.11", with Choice "version"
+        string title = "", installed = "";
+        bool modOn, read;
+        readonly List<string> vers = new List<string>();
+        readonly Dictionary<string, long> mb = new Dictionary<string, long>();
+        readonly ComboBox box;
+        readonly Label info;
+        readonly FlatButton change;
+
+        static string ShowVer(string v) { return v.StartsWith("0") ? v.Substring(1) : v; }
+        static string RegionName(string id)
+        {
+            switch (id)
+            {
+                case "BCES00569": return T.Zh ? "欧洲" : "Europe";
+                case "BCUS98114": return T.Zh ? "北美" : "North America";
+                case "BCAS20108": return T.Zh ? "亚洲" : "Asia";
+                case "BCJS30001": return T.Zh ? "日本" : "Japan";
+            }
+            return id;
+        }
+
+        public VersionForm(string script, string gt5)
+        {
+            ReadState(script, gt5);
+            Text = T.Get("help.version");
+            ClientSize = new Size(600, 420);
+            StartPosition = FormStartPosition.CenterParent;
+            FormBorderStyle = FormBorderStyle.FixedSingle; MaximizeBox = false; MinimizeBox = false; ShowInTaskbar = false;
+            BackColor = Look.Bg; ForeColor = Look.Text; Font = Look.F(10f, FontStyle.Regular);
+            try { Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath); } catch { }
+            int x = 24, w = 552, y = 18;
+            var head = new Label { Text = T.Get("ver.heading"), Font = Look.F(14f, FontStyle.Bold), AutoSize = true, Location = new Point(x, y) };
+            Controls.Add(head); y += 40;
+            var yours = new Label { ForeColor = Look.Dim, AutoSize = false, Size = new Size(w, 22), Location = new Point(x, y),
+                                    Text = read && title != "" ? string.Format(T.Get("ver.yours"), RegionName(title), title, ShowVer(installed)) : T.Get("ver.unknown") };
+            Controls.Add(yours); y += 32;
+            var to = new Label { Text = T.Get("ver.to"), AutoSize = true, Location = new Point(x, y + 4) };
+            Controls.Add(to);
+            box = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Location = new Point(x + 110, y), Size = new Size(300, 28),
+                                 BackColor = Look.Panel, ForeColor = Look.Text, FlatStyle = FlatStyle.Flat };
+            for (int i = 0; i < vers.Count; i++)
+            {
+                string v = vers[i], s = ShowVer(v);
+                if (v == "01.00") s = string.Format(T.Get("ver.disc"), s);
+                else if (v == "02.11") s = string.Format(T.Get("ver.mm"), s);
+                else if (i == vers.Count - 1) s = string.Format(T.Get("ver.newest"), s);
+                box.Items.Add(s);
+            }
+            Controls.Add(box); y += 40;
+            info = new Label { AutoSize = false, Size = new Size(w, 66), Location = new Point(x, y) };
+            Controls.Add(info); y += 70;
+            var note = new Label { Text = T.Get("ver.note"), ForeColor = Look.Dim, Font = Look.F(9f, FontStyle.Regular), AutoSize = false, Size = new Size(w, 40), Location = new Point(x, y) };
+            Controls.Add(note); y += 50;
+            var line = new Panel { BackColor = Look.Line, Location = new Point(x, y), Size = new Size(w, 1) };
+            Controls.Add(line); y += 12;
+            var dh = new Label { Text = T.Get("ver.dlc.head"), Font = Look.F(11f, FontStyle.Bold), AutoSize = true, Location = new Point(x, y) };
+            Controls.Add(dh); y += 28;
+            var dt = new Label { Text = T.Get("ver.dlc.text"), ForeColor = Look.Dim, AutoSize = false, Size = new Size(w, 40), Location = new Point(x, y) };
+            Controls.Add(dt); y += 44;
+            var dlc = new FlatButton(T.Get("ver.dlc.btn"), Look.Panel, Look.NavHot) { Location = new Point(x, y), Size = new Size(220, 34) };
+            dlc.Click += delegate { Choice = "dlc"; Close(); };
+            Controls.Add(dlc);
+            change = new FlatButton(T.Get("ver.change"), Look.Blue, Color.FromArgb(90, 160, 240)) { Location = new Point(x + w - 260, y), Size = new Size(120, 34) };
+            change.Click += delegate
+            {
+                if (box.SelectedIndex < 0 || box.SelectedIndex >= vers.Count) return;
+                Choice = "version"; Version = vers[box.SelectedIndex]; Close();
+            };
+            Controls.Add(change);
+            var close = new FlatButton(T.Get("uw.close"), Look.Panel, Look.NavHot) { Location = new Point(x + w - 130, y), Size = new Size(130, 34) };
+            close.Click += delegate { Close(); };
+            Controls.Add(close);
+            box.SelectedIndexChanged += delegate { Explain(); };
+            int at = vers.IndexOf(installed);
+            if (box.Items.Count > 0) box.SelectedIndex = at >= 0 ? at : 0;
+            Explain();
+        }
+
+        protected override void OnHandleCreated(EventArgs e)
+        {
+            base.OnHandleCreated(e);
+            try { int on = 1; if (DwmSetWindowAttribute(Handle, 20, ref on, 4) != 0) DwmSetWindowAttribute(Handle, 19, ref on, 4); } catch { }
+        }
+
+        // game_version.ps1 -Show: title=, installed=, mod=, then version=<v> mb=<n> for each version.
+        void ReadState(string script, string gt5)
+        {
+            try
+            {
+                var psi = new ProcessStartInfo("powershell.exe",
+                    "-NoProfile -ExecutionPolicy Bypass -File \"" + script + "\" -Show -Gt5 \"" + gt5 + "\"")
+                { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, StandardOutputEncoding = Encoding.UTF8 };
+                using (var p = Process.Start(psi))
+                {
+                    string all = p.StandardOutput.ReadToEnd();
+                    p.WaitForExit(20000);
+                    foreach (string raw in all.Split('\n'))
+                    {
+                        string l = raw.Trim();
+                        if (l.StartsWith("title=")) title = l.Substring(6);
+                        else if (l.StartsWith("installed=")) installed = l.Substring(10);
+                        else if (l.StartsWith("mod=")) modOn = l.Substring(4) == "1";
+                        else if (l.StartsWith("version="))
+                        {
+                            var m = Regex.Match(l, @"^version=([\d.]+) mb=(\d+)");
+                            if (m.Success) { vers.Add(m.Groups[1].Value); mb[m.Groups[1].Value] = long.Parse(m.Groups[2].Value, CultureInfo.InvariantCulture); }
+                        }
+                    }
+                    read = installed != "";
+                }
+            }
+            catch { read = false; }
+        }
+
+        void Explain()
+        {
+            string v = box.SelectedIndex >= 0 && box.SelectedIndex < vers.Count ? vers[box.SelectedIndex] : null;
+            bool can = v != null && v != installed && !modOn;
+            change.Enabled = can;
+            change.BackColor = can ? Look.Blue : Look.Panel;
+            change.ForeColor = can ? Look.Text : Look.Dim;
+            info.ForeColor = Look.Text;
+            if (v == null) { info.Text = T.Get("ver.unknown"); return; }
+            if (v == installed) { info.Text = T.Get("ver.same"); return; }
+            if (modOn) { info.Text = T.Get("ver.modon"); info.ForeColor = Color.FromArgb(240, 190, 90); return; }
+            if (v == "01.00") { info.Text = T.Get("ver.to100"); return; }
+            long n; mb.TryGetValue(v, out n);
+            string s = n > 0 ? string.Format(T.Get("ver.dl"), n) : T.Get("ver.dl0");
+            double a, b;
+            if (double.TryParse(v, NumberStyles.Float, CultureInfo.InvariantCulture, out a) && double.TryParse(installed, NumberStyles.Float, CultureInfo.InvariantCulture, out b) && a < b)
+                s += " " + T.Get("ver.back");
+            info.Text = s;
         }
     }
 
@@ -2393,6 +2563,21 @@ namespace Gt5Launcher
                     bmp.Save(Path.Combine(dir, "launcher_" + k.Substring(4) + ".png"), System.Drawing.Imaging.ImageFormat.Png);
                 }
             }
+            // The Help page's Game version and DLC window, with what game_version.ps1 -Show reads for this install.
+            if (File.Exists(VersionScript()))
+            {
+                using (var f = new VersionForm(VersionScript(), P.Gt5))
+                {
+                    f.StartPosition = FormStartPosition.Manual; f.Location = new Point(-4000, -4000);
+                    f.Show(); Application.DoEvents();
+                    using (var bmp = new Bitmap(f.Width, f.Height))
+                    {
+                        f.DrawToBitmap(bmp, new Rectangle(0, 0, f.Width, f.Height));
+                        bmp.Save(Path.Combine(dir, "launcher_version.png"), System.Drawing.Imaging.ImageFormat.Png);
+                    }
+                    f.Close();
+                }
+            }
         }
 
         // (A first start used to pick 720p from the processor count: a graphics choice made from the CPU, while the
@@ -3392,7 +3577,7 @@ namespace Gt5Launcher
                 new[] { "help.readme", "https://github.com/MormonFTP-hub/gt5-recomp#faq" },
                 new[] { "help.changes", "https://github.com/MormonFTP-hub/gt5-recomp/blob/main/CHANGELOG.md" },
                 new[] { "help.discord", "https://discord.gg/xvhGcuD7Kk" },
-                new[] { "help.shaders", "shaders" }, new[] { "help.pkg", "pkg" }, new[] { "help.mod", "mod" },
+                new[] { "help.shaders", "shaders" }, new[] { "help.version", "version" }, new[] { "help.pkg", "pkg" }, new[] { "help.mod", "mod" },
             };
             // Two columns (the list no longer fits in one without scrolling): the first half down the left.
             int rows = (links.Length + 1) / 2, y0 = y;
@@ -3417,6 +3602,27 @@ namespace Gt5Launcher
             {
                 if (what == "logs") { Directory.CreateDirectory(P.Logs); Process.Start("explorer.exe", "\"" + P.Logs + "\""); return; }
                 if (what == "shaders") { ClearShaderCache(); return; }
+                if (what == "version")
+                {
+                    if (strip.Busy) { status.Text = T.Get("busy"); return; }
+                    if (GameRunning() || running) { strip.Note("help.version", "fail.game"); return; }
+                    if (!File.Exists(VersionScript())) { strip.Note("help.version", "fail.update"); return; }
+                    string choice = null, ver = null;
+                    Cursor = Cursors.WaitCursor;
+                    using (var f = new VersionForm(VersionScript(), P.Gt5))
+                    {
+                        Cursor = Cursors.Default;
+                        f.ShowDialog(this);
+                        choice = f.Choice; ver = f.Version;
+                    }
+                    if (choice == "dlc") { HelpAction("pkg"); return; }
+                    if (choice == "version" && ver != null)
+                    {
+                        if (GameRunning() || running) { strip.Note("help.version", "fail.game"); return; }
+                        RunVersion(ver);
+                    }
+                    return;
+                }
                 if (what == "pkg")
                 {
                     if (strip.Busy) { status.Text = T.Get("busy"); return; }
@@ -3908,6 +4114,7 @@ namespace Gt5Launcher
                     return null;
                 }
                 if (l.Contains("RPCS3 wasn't found")) return "pkg.norpcs3";
+                if (l.StartsWith("Updates install only in order")) return "pkg.order";
                 if (l.Contains("None of those is a PS3 package") || l.Contains("No .pkg files")) return "pkg.notpkg";
                 if (l.StartsWith("Not installed:")) return "pkg.some";
                 return null;
@@ -3915,6 +4122,42 @@ namespace Gt5Launcher
             j.Ended = delegate (bool ok)
             {
                 status.Text = T.Get(ok ? "pkg.done" : "pkg.notdone");
+                if (ok && needsBuild) BuildForUpdate(0);
+            };
+            StartJob(j);
+        }
+
+        // game_version.ps1 -To <version>: downloads Sony's updates (checked against gt5_updates.txt), installs them
+        // through install_pkg.ps1, or puts the disc's version back; the game is then built for it, as after an update.
+        string VersionScript() { return Path.Combine(P.Gt5, "scripts", "game_version.ps1"); }
+        void RunVersion(string ver)
+        {
+            var j = new HelperJob { TitleKey = "ver.title", Script = VersionScript(), Log = "game_version", DoneKey = "ver.done", AutoHide = false };
+            j.Args.Add("-To"); j.Args.Add(ver);
+            j.Env["GT5_PKG_NOPAUSE"] = "1";
+            bool needsBuild = false;
+            j.Explain = delegate (string l, bool worked)
+            {
+                if (worked)
+                {
+                    if (l.StartsWith("Next: run setup"))
+                    {
+                        needsBuild = SetupScript() != null;
+                        return needsBuild ? "pkg.next" : "pkg.next.manual";
+                    }
+                    return null;
+                }
+                if (l.StartsWith("A game mod is installed")) return "ver.modon";
+                if (l.StartsWith("Not enough free space")) return "ver.space";
+                if (l.StartsWith("Downloading update") || l.Contains("didn't come down as Sony lists it")) return "ver.net";
+                if (l.Contains("RPCS3 wasn't found") || l.Contains("RPCS3 couldn't be fetched")) return "pkg.norpcs3";
+                if (l.StartsWith("The game isn't at") || l.StartsWith("The update's executable")) return "ver.notdone";
+                return null;
+            };
+            j.Ended = delegate (bool ok)
+            {
+                status.Text = T.Get(ok ? "ver.done" : "ver.notdone");
+                RefreshModButton();
                 if (ok && needsBuild) BuildForUpdate(0);
             };
             StartJob(j);

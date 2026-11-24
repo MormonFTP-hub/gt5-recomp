@@ -989,7 +989,27 @@ Check a file's hash with `Get-FileHash <file> -Algorithm SHA1` in PowerShell.
 A game update brings a new executable and data the game reads from the PS3's hard disk (for 2.01,
 about 2.2 GB of files in `PDIPFS`). The port needs both.
 
-**The easy way, from your update's `.pkg` files (since v0.1.45):** in the launcher, *Help > Install a game
+<a id="game-version"></a>
+
+**The easiest way: pick the version (since v0.1.112).** In the launcher, *Help > Game version and DLC*
+shows the version your game is at and lets you change it to any other: **1.00** (the disc), any official
+update up to **2.17** (the newest), or **2.11** for the [Master Mod](#game-mods). The launcher downloads the
+updates it needs straight from Sony's update server (the same packages a PS3 or RPCS3 gets), checks each one
+against Sony's own list (size and SHA-1, kept in `GT5\scripts\gt5_updates.txt`), installs them and builds the
+game for that version (about 20 minutes once they're downloaded; 1.05 to 2.17 is about 4.6 GB in all).
+- Going to an older version installs the updates from 1.05 on again; going to 1.00 removes the update data.
+  If anything fails, the game is put back as it was.
+- Downloaded packages are kept in `downloads\game-updates` in the install folder for the next change (delete
+  them if you need the space).
+- It uses the install's own RPCS3 (`tools\rpcs3`, fetched once), never yours. Your saves aren't touched.
+- Not while a game mod is installed: remove the mod first (an update would overwrite part of it).
+- Europe (`BCES00569`), North America (`BCUS98114`), Asia (`BCAS20108`) and Japan (`BCJS30001`).
+- Without the launcher: `powershell -ExecutionPolicy Bypass -File GT5\scripts\game_version.ps1 -To 2.11`.
+
+DLC is bought content, so it can't be downloaded this way: see [DLC](#dlc) (the same window has a button for
+your DLC packages).
+
+**From your update's `.pkg` files (since v0.1.45):** in the launcher, *Help > Install a game
 update or DLC (.pkg)*, and pick the update packages. Pick all of them from the first one (1.05, 1.06
 ... up to the version you want): RPCS3 installs updates only in order, and the ones it already has are
 skipped. This runs `GT5\scripts\install_pkg.ps1`. It installs the packages with RPCS3 (its window opens
@@ -1029,8 +1049,9 @@ A mod that comes as a zip of `PDIPFS` files, like the [GT5 Master Mod](https://g
 installs straight into the port. No RPCS3 step is needed for the mod itself.
 
 1. **Bring the game to the update the mod needs.** The Master Mod needs **2.11 exactly**, not higher and
-   not lower: install the update packages from 1.05 up to 2.11 as in [Game updates](#game-updates). The
-   launcher builds the game for the update right after (about 20 minutes).
+   not lower: in the launcher, *Help > Game version and DLC*, pick 2.11 ([Game version](#game-version)), or
+   install the update packages from 1.05 up to 2.11 as in [Game updates](#game-updates). The launcher builds
+   the game for the update right after (about 20 minutes).
 2. **Download the mod's zip for your release of the game** from the mod's own site: the one named for
    your game's ID (Europe `BCES00569`, North America `BCUS98114`, and so on). The game's files are locked
    per release, so another release's zip doesn't work.
