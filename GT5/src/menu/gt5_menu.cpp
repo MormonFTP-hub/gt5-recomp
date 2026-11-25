@@ -31,6 +31,17 @@
 volatile long g_gt5_menu_captured;   // gt5_menu.h; `long` there so that plain C on any platform can read it
 volatile long g_gt5_menu_pause_want; // gt5_menu.h: the menu or the quit question is open ([win] GT5_MENU_PAUSE)
 
+// [freecam] The free camera (GT5/src/gt5_freecam.cpp): its key, the keys, mouse and controller that fly it
+// come from here. While it is on, the game has no input, as while the menu is open.
+extern "C" int  gt5_freecam_on(void);
+extern "C" int  gt5_freecam_state(void);     // 0 off, 1 starting, 2 on
+extern "C" int  gt5_freecam_set(int on);
+extern "C" void gt5_freecam_keys(unsigned keys);
+extern "C" void gt5_freecam_mouse(int dx, int dy);
+extern "C" void gt5_freecam_wheel(int notches);
+extern "C" void gt5_freecam_reset(void);
+extern "C" void gt5_freecam_pad(int connected, unsigned buttons, int lx, int ly, int rx, int ry, int l2, int r2);
+
 namespace gt5m {
 
 Ui ui;
@@ -95,12 +106,30 @@ struct State {
     ULONGLONG last_frame_tick = 0;        // GetTickCount64 at the last frame a renderer could draw the menu into (core_build_frame): is the picture still coming?
     int hint_state = 0;                   // the first-start hint: 0 not decided yet, 1 to show, -1 not
     double hint_first = 0;                // now_s() at the first frame it could be shown in
+    // [freecam]
+    int freecam_vk = VK_F6;               // GT5_FREECAM_KEY, 0 = none
+    char freecam_key[32] = "F6";          // its name, for the notice
+    unsigned fc_keys = 0;                 // the flying keys held (gt5_freecam_keys)
+    bool fc_mouse_fresh = true;           // the next mouse movement only centres the cursor
+    int fc_last_x = 0, fc_last_y = 0;     // the last position, when the window isn't in front (no centring)
+    bool fc_clipped = false;
+    ULONGLONG fc_clip_at = 0;
+    int fc_shown = 0;                     // 0 nothing said, 1 switched on but not started yet, 2 on
 };
 State s;
 
+// [freecam] The game gets its input back once the free camera is off and what flew it is let go (as when
+// the menu closes): a key or button held then must not reach the game.
+volatile LONG s_fc_was_on;
+
 void update_captured()
 {
-    InterlockedExchange(&g_gt5_menu_captured, (ui.open || ui.quit || s.chord_hold || s.release_wait) ? 1 : 0);
+    const LONG fc = gt5_freecam_on() ? 1 : 0;
+    if (InterlockedExchange(&s_fc_was_on, fc) && !fc) {
+        s.release_until = GetTickCount64() + 150;
+        InterlockedExchange(&s.release_wait, 1);
+    }
+    InterlockedExchange(&g_gt5_menu_captured, (ui.open || ui.quit || s.chord_hold || s.release_wait || fc) ? 1 : 0);
     // [win] the game holds still while the menu or the quit question is open (cellPad.c, GT5_MENU_PAUSE)
     InterlockedExchange(&g_gt5_menu_pause_want, (ui.open || ui.quit) ? 1 : 0);
 }
@@ -115,6 +144,16 @@ void refresh_settings()
     gt5_setting_str("GT5_MENU_KEY", b, sizeof b);
     const int vk = b[0] ? gt5_kb_vk(b) : 0;
     s.menu_vk = vk ? vk : VK_F1;
+    // [freecam] GT5_FREECAM_KEY: F6 unless set; "none" = no key (the menu's row still switches it). Never the
+    // menu's own key, nor F11 (full screen).
+    gt5_setting_str("GT5_FREECAM_KEY", b, sizeof b);
+    if (!_stricmp(b, "none")) { s.freecam_vk = 0; s.freecam_key[0] = 0; }
+    else {
+        const int fk = b[0] ? gt5_kb_vk(b) : 0;
+        s.freecam_vk = fk ? fk : VK_F6;
+        snprintf(s.freecam_key, sizeof s.freecam_key, "%s", fk ? b : "F6");
+        if (s.freecam_vk == s.menu_vk || s.freecam_vk == VK_F11 || s.freecam_vk == VK_ESCAPE) { s.freecam_vk = 0; s.freecam_key[0] = 0; }
+    }
     gt5_setting_str("GT5_MENU_PAD", b, sizeof b);
     s.chord_mask = !_stricmp(b, "off") ? 0 : !_stricmp(b, "l3r3") ? (unsigned short)((1 << 1) | (1 << 2))
                                                                 : (unsigned short)((1 << 0) | (1 << 3));
@@ -264,12 +303,127 @@ bool keys_up()
     return true;
 }
 
+// ---- [freecam] the free camera's keys and mouse ---------------------------------------------------------
+// While it is on and neither the menu nor the quit question is open: W A S D (or the arrows) fly, Q / E (or
+// Page Down / Up) go down and up, Shift faster, Ctrl slower, the mouse looks, the wheel (or + / -) zooms, the
+// middle button (or R) puts the zoom and the horizon back. Its own key switches it on and off. Everything
+// else (F1, F11, Esc, Alt+F4) is left to the window.
+
+const int kNoticeFreecam = GT5_NOTICE_COUNT - 1;
+
+unsigned fc_key_bit(WPARAM vk)
+{
+    switch (vk) {
+    case 'W': case VK_UP: return 1;                                   // forward
+    case 'S': case VK_DOWN: return 2;                                 // back
+    case 'A': case VK_LEFT: return 4;
+    case 'D': case VK_RIGHT: return 8;
+    case 'E': case VK_PRIOR: return 16;                               // up
+    case 'Q': case VK_NEXT: return 32;                                // down
+    case VK_SHIFT: case VK_LSHIFT: case VK_RSHIFT: return 64;        // faster
+    case VK_CONTROL: case VK_LCONTROL: case VK_RCONTROL: return 128;  // slower
+    default: return 0;
+    }
+}
+
+bool fc_in_front() { return GetForegroundWindow() == s.hwnd; }
+
+// The cursor kept inside the window while the mouse looks (renewed now and then: Windows drops a clip).
+void fc_clip(bool on)
+{
+    if (on) {
+        const ULONGLONG now = GetTickCount64();
+        if (s.fc_clipped && now - s.fc_clip_at < 250) return;
+        RECT r;
+        POINT o = { 0, 0 };
+        if (GetClientRect(s.hwnd, &r) && ClientToScreen(s.hwnd, &o) && r.right > 0 && r.bottom > 0) {
+            OffsetRect(&r, o.x, o.y);
+            ClipCursor(&r);
+            s.fc_clipped = true;
+            s.fc_clip_at = now;
+        }
+    } else if (s.fc_clipped) {
+        ClipCursor(nullptr);
+        s.fc_clipped = false;
+        s.fc_mouse_fresh = true;
+        PostMessageW(s.hwnd, WM_SETCURSOR, (WPARAM)s.hwnd, MAKELPARAM(HTCLIENT, WM_MOUSEMOVE));
+    }
+}
+
+// A mouse movement: with the window in front the cursor is hidden and put back in the middle each time, so
+// the mouse can turn the camera as far as it likes; behind (nothing to centre), from the last position.
+void fc_mouse_move(LPARAM lp)
+{
+    const int x = (short)LOWORD(lp), y = (short)HIWORD(lp);
+    if (fc_in_front()) {
+        RECT rc;
+        if (!GetClientRect(s.hwnd, &rc) || rc.right <= 0 || rc.bottom <= 0) return;
+        POINT c = { rc.right / 2, rc.bottom / 2 };
+        if (x == c.x && y == c.y) { s.fc_mouse_fresh = false; return; }   // the move that centred it
+        if (!s.fc_mouse_fresh) gt5_freecam_mouse(x - c.x, y - c.y);
+        s.fc_mouse_fresh = false;
+        fc_clip(true);
+        ClientToScreen(s.hwnd, &c);
+        SetCursorPos(c.x, c.y);
+    } else {
+        if (!s.fc_mouse_fresh) gt5_freecam_mouse(x - s.fc_last_x, y - s.fc_last_y);
+        s.fc_mouse_fresh = false;
+        s.fc_last_x = x; s.fc_last_y = y;
+    }
+}
+
+// The player's key: on or off, and a few words in the corner either way.
+void fc_switch()
+{
+    const bool on = !gt5_freecam_on();
+    const int r = gt5_freecam_set(on ? 1 : 0);
+    s.fc_keys = 0;
+    gt5_freecam_keys(0);
+    s.fc_mouse_fresh = true;
+    if (on && r > 0) {
+        char en[96], zh[96];
+        snprintf(en, sizeof en, s.freecam_key[0] ? "Free camera  ·  %s to leave" : "Free camera", s.freecam_key);
+        snprintf(zh, sizeof zh, s.freecam_key[0] ? "自由视角  ·  按 %s 退出" : "自由视角", s.freecam_key);
+        gt5_menu_notice(kNoticeFreecam, en, zh, 4000);
+        s.fc_shown = 1;
+    } else {
+        gt5_menu_notice(kNoticeFreecam, nullptr, nullptr, 0);
+        s.fc_shown = 0;
+    }
+    update_captured();
+}
+
+// Each frame, on the window's thread: the cursor let go when the free camera is off (or the menu has the
+// mouse, or the window isn't in front), and a word when it couldn't start.
+void fc_frame()
+{
+    const int st = gt5_freecam_state();
+    if (st == 0 || ui.open || ui.quit || !fc_in_front()) fc_clip(false);
+    if (st == 0 && s.fc_shown) {
+        // It went off by itself: no race view to fly in (asked for at a menu), or the race ended.
+        gt5_menu_notice(kNoticeFreecam, nullptr, nullptr, 0);
+        if (s.fc_shown == 1)
+            gt5_menu_notice(kNoticeFreecam, "Free camera: in a race or a replay",
+                            "自由视角：仅限比赛或回放", 4000);
+        s.fc_shown = 0;
+        s.fc_keys = 0;
+        gt5_freecam_keys(0);
+    } else if (st == 2 && s.fc_shown == 1) {
+        s.fc_shown = 2;
+    } else if (st != 0 && !s.fc_shown) {
+        s.fc_shown = st;            // switched on from the menu's row
+    }
+    update_captured();
+}
+
 void set_open(bool open)
 {
     if (!s.inited || ui.open == open) return;
     ImGuiIO& io = ImGui::GetIO();
     ui.open = open;
     if (open) {
+        s.fc_keys = 0;                          // [freecam] the keys go to the menu now
+        gt5_freecam_keys(0);
         ui_opened();
         ClipCursor(nullptr);                    // whatever held the mouse in a race lets go
         s.last.QuadPart = 0;
@@ -520,6 +674,7 @@ bool build_frame()
         ReleaseSRWLockShared(&s.feed_lock);
         if (idle && (keys_up() || GetTickCount64() >= s.release_until + 1500)) { InterlockedExchange(&s.release_wait, 0); update_captured(); }
     }
+    fc_frame();
     save_if_due();
     const float hint = hint_alpha();      // [win] the first-start hint, 0 when not showing
     const bool notes = !ui.open && !ui.quit && s.notices_allowed && s.notices_on;   // [merge] not over the quit question
@@ -819,7 +974,7 @@ extern "C" int gt5_menu_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp, LRESU
         // closed (not while a key is being chosen for a row, and not when F11 is the menu's own key).
         const bool full_key = (msg == WM_KEYDOWN && wp == VK_F11 && s.menu_vk != VK_F11) ||
                               (msg == WM_SYSKEYDOWN && wp == VK_RETURN && (lp & (1L << 29)));
-        if (full_key && ui.bind != BIND_KEY_ROW && ui.bind != BIND_MENU_KEY) {
+        if (full_key && ui.bind != BIND_KEY_ROW && ui.bind != BIND_MENU_KEY && ui.bind != BIND_FREECAM_KEY) {
             if (!repeat) {
                 static char back[32] = "windowed";      // what to return to: a window, or a maximised one
                 char mode[32];
@@ -836,6 +991,18 @@ extern "C" int gt5_menu_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp, LRESU
         if (!ui.open && !ui.quit) {
             refresh_settings();
             if ((int)wp == s.menu_vk && !repeat) { set_open(true); s.swallow_up_vk = (int)wp; return 1; }
+            // [freecam] its key, and while it is on the keys that fly it
+            if (msg == WM_KEYDOWN && s.freecam_vk && (int)wp == s.freecam_vk) {
+                if (!repeat) fc_switch();
+                s.swallow_up_vk = (int)wp;
+                return 1;
+            }
+            if (msg == WM_KEYDOWN && gt5_freecam_on()) {
+                if (const unsigned bit = fc_key_bit(wp)) { s.fc_keys |= bit; gt5_freecam_keys(s.fc_keys); return 1; }
+                if (wp == VK_ADD || wp == VK_OEM_PLUS) { gt5_freecam_wheel(1); return 1; }
+                if (wp == VK_SUBTRACT || wp == VK_OEM_MINUS) { gt5_freecam_wheel(-1); return 1; }
+                if (wp == 'R') { if (!repeat) gt5_freecam_reset(); return 1; }
+            }
             return 0;
         }
         ui.keyboard_last = true;
@@ -847,13 +1014,13 @@ extern "C" int gt5_menu_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp, LRESU
             if (k != ImGuiKey_None) io.AddKeyEvent(k, true);
             return 1;
         }
-        if (ui.bind == BIND_KEY_ROW || ui.bind == BIND_MENU_KEY) {
+        if (ui.bind == BIND_KEY_ROW || ui.bind == BIND_MENU_KEY || ui.bind == BIND_FREECAM_KEY) {
             // The next key is the one being chosen: it never reaches the menu's own navigation.
             if (!repeat) {
                 s.swallow_up_vk = (int)wp;
                 if (wp == VK_ESCAPE) ui_key_taken(nullptr);
-                // The menu's own key and F11 (full screen) are never a game button's key.
-                else if (!(ui.bind == BIND_KEY_ROW && ((int)wp == s.menu_vk || wp == VK_F11))) {
+                // The menu's own key and F11 (full screen) are never a game button's key, nor the free camera's.
+                else if (!((ui.bind == BIND_KEY_ROW || ui.bind == BIND_FREECAM_KEY) && ((int)wp == s.menu_vk || wp == VK_F11))) {
                     const char* name = gt5_kb_key_from_vk((int)wp, (long long)lp); if (name) ui_key_taken(name);
                 }
             }
@@ -869,7 +1036,16 @@ extern "C" int gt5_menu_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp, LRESU
     case WM_KEYUP:
     case WM_SYSKEYUP: {
         if (s.swallow_up_vk && (int)wp == s.swallow_up_vk) { s.swallow_up_vk = 0; return 1; }
-        if (!ui.open && !ui.quit) return 0;
+        if (!ui.open && !ui.quit) {
+            // [freecam] a flying key let go (also once it is off: nothing stays held for next time)
+            if (const unsigned bit = fc_key_bit(wp)) {
+                const bool had = (s.fc_keys & bit) != 0;
+                s.fc_keys &= ~bit;
+                gt5_freecam_keys(s.fc_keys);
+                if (had && gt5_freecam_on()) return 1;
+            }
+            return 0;
+        }
         mods_event(io);
         const ImGuiKey k = vk_to_key(wp, lp);
         if (k != ImGuiKey_None) io.AddKeyEvent(k, false);
@@ -882,14 +1058,21 @@ extern "C" int gt5_menu_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp, LRESU
     case WM_SYSCOMMAND:
         return (ui.open || ui.quit) && (wp & 0xFFF0) == SC_KEYMENU ? 1 : 0;        // Alt alone doesn't open the window menu
     case WM_MOUSEMOVE:
-        if (!ui.open && !ui.quit) return 0;
+        if (!ui.open && !ui.quit) {
+            if (gt5_freecam_on()) { fc_mouse_move(lp); return 1; }   // [freecam] the mouse looks
+            return 0;
+        }
         mouse_pos_event(io, lp);
         return 1;
     case WM_LBUTTONDOWN: case WM_LBUTTONDBLCLK:
     case WM_RBUTTONDOWN: case WM_RBUTTONDBLCLK:
     case WM_MBUTTONDOWN: case WM_MBUTTONDBLCLK:
     case WM_XBUTTONDOWN: case WM_XBUTTONDBLCLK: {
-        if (!ui.open && !ui.quit) return 0;
+        if (!ui.open && !ui.quit) {
+            // [freecam] the middle button: the zoom and the horizon back
+            if (gt5_freecam_on() && (msg == WM_MBUTTONDOWN || msg == WM_MBUTTONDBLCLK)) { gt5_freecam_reset(); return 1; }
+            return 0;
+        }
         if ((msg == WM_XBUTTONDOWN || msg == WM_XBUTTONDBLCLK) && ui.bind == BIND_KEY_ROW) {
             ui_key_taken(GET_XBUTTON_WPARAM(wp) == XBUTTON1 ? "Mouse4" : "Mouse5");
             if (result) *result = TRUE;
@@ -915,16 +1098,33 @@ extern "C" int gt5_menu_wndproc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp, LRESU
         return 1;
     }
     case WM_MOUSEWHEEL:
-        if (!ui.open && !ui.quit) return 0;
+        if (!ui.open && !ui.quit) {
+            if (gt5_freecam_on()) {                                   // [freecam] the wheel zooms
+                static int rest;
+                rest += GET_WHEEL_DELTA_WPARAM(wp);
+                const int notches = rest / WHEEL_DELTA;
+                rest -= notches * WHEEL_DELTA;
+                if (notches) gt5_freecam_wheel(notches);
+                return 1;
+            }
+            return 0;
+        }
         io.AddMouseWheelEvent(0.0f, (float)GET_WHEEL_DELTA_WPARAM(wp) / (float)WHEEL_DELTA);
         ui.keyboard_last = false;
         return 1;
     case WM_SETCURSOR:
         // The arrow over the picture while the menu is open, whatever hid it for the game.
         if ((ui.open || ui.quit) && LOWORD(lp) == HTCLIENT) { SetCursor(LoadCursorW(nullptr, (LPCWSTR)IDC_ARROW)); if (result) *result = TRUE; return 1; }
+        // [freecam] no cursor over the picture while the mouse looks
+        if (!ui.open && !ui.quit && LOWORD(lp) == HTCLIENT && gt5_freecam_on() && fc_in_front()) { SetCursor(nullptr); if (result) *result = TRUE; return 1; }
         return 0;
     case WM_KILLFOCUS:
         if (ui.open || ui.quit) { io.AddFocusEvent(false); s.buttons_down = 0; }
+        // [freecam] keys let go elsewhere never come back here as key-ups
+        s.fc_keys = 0;
+        gt5_freecam_keys(0);
+        s.fc_mouse_fresh = true;
+        fc_clip(false);
         return 0;
     case WM_SETFOCUS:
         if (ui.open || ui.quit) io.AddFocusEvent(true);
@@ -956,6 +1156,10 @@ extern "C" void gt5_menu_feed_pad(const gt5_menu_pad* pad)
     }
     if (s.release_wait && !down && pad->buttons == 0 && now >= s.release_until && (keys_up() || now >= s.release_until + 1500)) InterlockedExchange(&s.release_wait, 0);
     ReleaseSRWLockExclusive(&s.feed_lock);
+    // [freecam] the controller flies it (sticks, triggers, L1 / R1 slower / faster, the d-pad zooms, R3 puts
+    // the zoom back), but not while the menu has it or the menu's button pair is being held
+    const bool fc_pad = pad->connected && !ui.open && !ui.quit && !s.chord_hold;
+    gt5_freecam_pad(fc_pad ? 1 : 0, pad->buttons, pad->lx, pad->ly, pad->rx, pad->ry, pad->l2, pad->r2);
     update_captured();
 }
 

@@ -383,6 +383,7 @@ especially: the port was tuned on one desktop with an NVIDIA card.
 | Widescreen (16:9)? | ✅ Yes, GT5 is a 16:9 game |
 | Ultrawide (21:9, 32:9)? | ✅ New: a wider view, with the HUD kept 16:9 in the middle |
 | Wider cockpit view, seat position? | ✅ New: the launcher's Game > Cockpit view ([more](#cockpit-view)) |
+| A free camera? | ✅ New: **F6** in a race or a replay ([more](#free-camera)) |
 | Which controllers? | ✅ DualSense, DualShock 4, Xbox pads, keyboard; new: [keys of your choice](#keyboard-keys), [steering with the mouse](#mouse-steering) |
 | US copy (BCUS98114)? | ✅ Yes, players have raced on it |
 | Version 1.02, or a game update (2.xx)? | 🧪 New: game updates run: 2.17 (the last) tested on the US and European releases, 2.01 on the Asian one, 2.11 with the Master Mod on the US one by a player ([how to set one up](#game-updates)); 1.02 untried |
@@ -500,6 +501,26 @@ views and the menus stay as they are. All three are off by default, and then not
 `logs\play.err` has a `[cockpit]` line with the game's number and the new one. The in-car camera is found
 by its name in the game's code, so this isn't tied to one release: tested on the European disc, and the
 same camera code is in the 2.17 update and the Asian disc and 2.01.
+
+<a id="free-camera"></a>
+**Q: Can I move the camera freely (Arcade has no Photo Mode)?**
+
+**A: Yes, new: press F6 in a race or a replay.** The view leaves the car and flies where you steer it;
+**F6** again goes back to the game's camera. It starts exactly where the game's camera was, and the car
+gets no input while it is on. Pause first (Start) to look around a frozen moment.
+
+| | Keyboard and mouse | Controller |
+|---|---|---|
+| Move | `W` `A` `S` `D`, `Q` / `E` down and up | left stick, the triggers down and up |
+| Look | the mouse | right stick |
+| Faster / slower | `Shift` / `Ctrl` | R1 / L1 |
+| Zoom | the mouse wheel, or `+` / `-` | d-pad up and down |
+| Zoom back | the middle button, or `R` | R3 |
+
+The in-game menu's Game page has **Free camera** (on / off) and **Free camera key** (another key than F6).
+It is off until you use it, and the game is untouched until then. Run on the European disc with DirectX 12
+and Vulkan; the game's race camera is found by its name, and the same code is in 2.11, 2.17, the Asian disc
+and 2.01.
 
 **Q: What resolution does it render at?**
 
@@ -1155,6 +1176,7 @@ so the launcher's settings win. Some useful ones:
 | `PS3_WHEEL=off` | Don't look for a steering wheel. The other `PS3_WHEEL_*` settings are in the [FAQ](#faq). |
 | `PS3_MOUSE_STEER=1` | Steer with the mouse in races (left button throttle, right brake). Its other settings are under [Mouse steering](#mouse-steering). |
 | `PS3_COCKPIT_FOV=20` | The cockpit view 20° wider (negative: narrower); `PS3_COCKPIT_SEAT` and `PS3_COCKPIT_HEIGHT` move the eye (cm forward, cm up). See [Cockpit view](#cockpit-view). |
+| `PS3_VBLANK_THREAD=0` | The screen-refresh clock the game starts its frames on comes from the drawing loop again, as before 25 Nov (frames then come 12 to 21 ms apart at 60 a second). By default it has a thread of its own and frames are 16.7 ms apart. |
 | `PS3_KEYS=cross:W,square:Space,...` | Your own keyboard keys, `button:key` pairs (the launcher's Controls page writes it). Button and key names are under [Your own keys](#keyboard-keys). |
 | `PS3_KEYS_ARROWS=split` | Where the arrow keys go. By default (without mouse steering or a wheel) the d-pad only: a tap moves one place in the menus, and in a race GT5 eases into the steering as it does with a PS3 pad's d-pad. `split`: Left/Right push the left stick (full lock at once), Up/Down press the d-pad, as before 18 Nov. With mouse steering or a wheel the default follows the game: d-pad only at the menus, d-pad and stick in a race. `both`: always both (a menu tap moves two places). |
 | `PS3_KEYS_WITH_PAD=0` | The keyboard is off while a pad is connected (by default both work together). |

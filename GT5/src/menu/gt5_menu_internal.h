@@ -19,7 +19,7 @@
 namespace gt5m {
 
 enum Sub { SUB_NONE = 0, SUB_KEYS = 1, SUB_WHEEL = 2 };
-enum BindKind { BIND_NONE = 0, BIND_KEY_ROW, BIND_MENU_KEY, BIND_WHEEL_BUTTON, BIND_WHEEL_PEDAL };
+enum BindKind { BIND_NONE = 0, BIND_KEY_ROW, BIND_MENU_KEY, BIND_WHEEL_BUTTON, BIND_WHEEL_PEDAL, BIND_FREECAM_KEY };
 
 // What the pad did this frame, beyond what Dear ImGui's own navigation takes.
 struct PadEdges {

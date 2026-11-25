@@ -64,6 +64,12 @@ static void wg_read_mode(void)
     const char* s = getenv("GT5_WGEN_STAT");
     wg_stat = s && *s && *s != '0';
     { const char* c = getenv("GT5_WGEN_CMP_EVERY"); if (c && atoi(c) > 0) wg_cmp_every = (unsigned)atoi(c); }
+#ifdef PS3RECOMP_SPU_NO_INTERP
+    if (m == 2) {   /* the compare runs the SPU interpreter, which this build leaves out (GT5_SPU_NO_INTERP=OFF has it) */
+        fprintf(stderr, "[wgen] %s: compare mode needs a build with the SPU interpreter; native code without it\n", WG_IMG_NAME);
+        m = 1;
+    }
+#endif
     wg_cmp = m == 2;
     __atomic_store_n(&wg_mode, m, __ATOMIC_RELEASE);
 }
@@ -137,7 +143,9 @@ static __attribute__((noinline)) uint32_t wg_compare(spu_context* ctx, wg_fn_t* 
     memcpy(keep, s->ls + ret, 4);
     s->ls[ret] = (uint8_t)(WG_CMP_STOP >> 24); s->ls[ret + 1] = (uint8_t)(WG_CMP_STOP >> 16);
     s->ls[ret + 2] = (uint8_t)(WG_CMP_STOP >> 8); s->ls[ret + 3] = (uint8_t)WG_CMP_STOP;
+#ifndef PS3RECOMP_SPU_NO_INTERP
     spu_interp_run_until(s, entry & SPU_LS_MASK, 0);
+#endif
     memcpy(s->ls + ret, keep, 4);
     const int reached = (s->status & SPU_STATUS_STOPPED_BY_STOP) && s->stop_code == (WG_CMP_STOP & 0x3FFFu) &&
                         (s->pc & SPU_LS_MASK) == ((ret + 4u) & SPU_LS_MASK);
@@ -182,6 +190,15 @@ static int wg_forced(uint32_t pc)
     for (int k = 0; k < wg_nforce; k++) if (pc >= wg_force[k][0] && pc <= wg_force[k][1]) return 1;
     return 0;
 }
+/* static2_spu (24 Nov 2026): a runtime call (WG_CALL_AT, in the call bracket) and an in-place hand-back's branch
+ * (WG_TRAMP, the trampoline its drain starts with) go through the direct switch of the image the dispatcher resolves
+ * the target in (gt5_direct_bi.c: the first resident code slot over it, else the context's image), with that
+ * image's own ready check and confirmation, else to the dispatcher as before. A hand-back to the procedure's own
+ * return point keeps the dispatcher's trampoline, which the drain loop ends on. GT5_DIRECT_BI=0: the dispatcher. */
+void gt5_dbi_call_at(spu_context* ctx);
+void gt5_dbi_branch_at(spu_context* ctx);
+#define WG_CALL_AT(c) gt5_dbi_call_at(c)
+#define WG_TRAMP(t) ((((uint32_t)(t) ^ _E) & SPU_LS_MASK) ? gt5_dbi_branch_at : spu_indirect_branch)
 static uint32_t wg_lifted_call(spu_context* ctx, uint32_t ret)
 {
     int32_t si = (int32_t)ctx->image_id;

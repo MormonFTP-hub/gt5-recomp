@@ -110,6 +110,7 @@ add_executable(gt5
     "${GT5_DIR}/src/gt5_debug.cpp"
     "${GT5_DIR}/src/gt5_widescreen.cpp"
     "${GT5_DIR}/src/gt5_cockpit.cpp"
+    "${GT5_DIR}/src/gt5_freecam.cpp"
     "${GT5_DIR}/src/gt5_padmap.cpp"
     "${GT5_DIR}/src/gt5_glyphs.cpp"
     "${GT5_DIR}/src/gt5_glyph_art.c"

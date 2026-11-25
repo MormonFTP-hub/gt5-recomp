@@ -35,6 +35,7 @@ gt5_dbi_fn spu_lookup(uint32_t addr, int image_id);                    /* spu_ch
 gt5_dbi_fn spu_lifted_lookup(const spu_context* ctx, uint32_t lsa);     /* spu_channels.c */
 uint32_t spu_registry_size(void);                                       /* spu_channels.c */
 int ps3_ab_on(const char* what);                                        /* sys_ppu_thread.c */
+#define GT5_DBI_PENDING 1
 #define GT5_DBI_VERIFIED 2   /* spu_channels.c: SPU_OVERLAY_PENDING = 1, SPU_OVERLAY_VERIFIED, SPU_OVERLAY_REJECTED */
 
 SPU_THREAD_LOCAL gt5_dbi_memo t_gt5_dbi[2];
@@ -145,7 +146,12 @@ int gt5_dbi_confirm(spu_context* ctx, const gt5_dbi_image* im0)
 {
     gt5_dbi_image* im = (gt5_dbi_image*)im0;
     const uint32_t pc = ctx->pc;
-    if (im->bad || !ctx->dcache_id) return 0;                  /* dcache_id 0: the dispatcher signs it first */
+    GT5_DBI_LK(pc, 4);                                           /* (the reason, unless it goes direct) */
+    if (im->bad) return 0;
+    /* dcache_id 0: the context's signature, zeroed by every change of its resident code (a job's load, a slot's
+     * verification). The dispatcher signs it again at its next lookup (spu_dc2_current_tag); so does this, the same
+     * way (static2_spu 4b: before, the first direct branch after each job load went to the dispatcher for it) */
+    if (!ctx->dcache_id) spu_dcache_sign_ctx(ctx);
     { const uint32_t rg = spu_registry_size();
       if (im->rgen != rg + 1u && !dbi_table_ok(im, rg + 1u)) return 0; }
     uint32_t lo = im->lo, hi = im->hi;
@@ -154,8 +160,13 @@ int gt5_dbi_confirm(spu_context* ctx, const gt5_dbi_image* im0)
         if (ctx->resident_code[s].image_id && pc - ctx->resident_code[s].lsa < ctx->resident_code[s].size) { first = s; break; }
     if (im->kind == 1) {
         if (first == 4) return 0;
+        if (ctx->resident_code[first].image_id != im->image_id) return 0;
+        /* a slot loaded and not yet compared (SPU_OVERLAY_PENDING): the dispatcher's resolver compares it at its
+         * first dispatch into it and goes on only when it matches; so does this (static2_spu) */
+        if (ctx->resident_code[first].verify_state == GT5_DBI_PENDING && !spu_code_slot_verify(ctx, first)) { GT5_DBI_LK(pc, 3); return 0; }
+        if (!ctx->dcache_id) spu_dcache_sign_ctx(ctx);         /* the verification changed the signature: sign again */
         const int vs = ctx->resident_code[first].verify_state;
-        if (ctx->resident_code[first].image_id != im->image_id || (vs && vs != GT5_DBI_VERIFIED)) return 0;
+        if (vs && vs != GT5_DBI_VERIFIED) { GT5_DBI_LK(pc, 3); return 0; }
         const uint32_t a = ctx->resident_code[first].lsa, e = a + ctx->resident_code[first].size;
         if (a > lo) lo = a;
         if (e < hi) hi = e;
@@ -201,6 +212,50 @@ int gt5_dbi_check(spu_context* ctx, gt5_dbi_image* im)
         fflush(stderr);
     }
     return got == want;
+}
+
+/* static2_spu (24 Nov 2026): the image the dispatcher resolves ctx->pc in -- the first resident code slot over it,
+ * else the context's image -- when it has direct branches and they are on. gt5_dbi_confirm then checks the rest
+ * (that slot verified, no overlay or task, the registry's functions), as for the image's own branches. */
+static inline const gt5_dbi_image* dbi_image_at(const spu_context* ctx)
+{
+    const uint32_t pc = ctx->pc;
+    int img = ctx->image_id;
+    for (unsigned s = 0; s < 4; s++)
+        if (ctx->resident_code[s].image_id && pc - ctx->resident_code[s].lsa < ctx->resident_code[s].size) {
+            img = ctx->resident_code[s].image_id;
+            break;
+        }
+    const gt5_dbi_image* im = (unsigned)img < 256u ? g_gt5_dbi_by_id[img] : NULL;
+    return im && im->branch_sv && im->mode ? im : NULL;
+}
+/* A call to ctx->pc (host_depth counted by the caller, as in a lifted call bracket): the image's call switch, which
+ * calls the entry's function as the dispatcher's plain path would, else calls the dispatcher. */
+void gt5_dbi_call_at(spu_context* ctx)
+{
+    ctx->pc &= SPU_LS_MASK;
+    const gt5_dbi_image* im = dbi_image_at(ctx);
+    if (im) {
+        if (im->mode == 1) { im->call_sv(ctx); return; }
+        if (im->mode == 2) { im->call_chk_sv(ctx); return; }
+    }
+    GT5_DBI_LK(ctx->pc, 6);
+    spu_indirect_branch(ctx);
+}
+/* A branch to ctx->pc, as a trampoline the drain loop calls after its per-step work (never with ctx->pc at that
+ * drain's return point: the caller makes sure). The image's branch switch when the branch is ready there (it then
+ * tail-calls the entry's function, or, for a pc that is not one of its entries, leaves the dispatcher's trampoline
+ * for the drain's next step), else the dispatcher right away. */
+void gt5_dbi_branch_at(spu_context* ctx)
+{
+    ctx->pc &= SPU_LS_MASK;
+    const gt5_dbi_image* im = dbi_image_at(ctx);
+    if (im && ctx->pc - im->lo < im->hi - im->lo && gt5_dbi_ready(ctx, im)) {
+        if (im->mode == 1) { im->branch_sv(ctx); return; }
+        if (im->mode == 2) { im->branch_chk_sv(ctx); return; }
+    }
+    if (!im) GT5_DBI_LK(ctx->pc, 6);
+    spu_indirect_branch(ctx);
 }
 
 /* An image's descriptor, for natives that take its direct branches themselves (NULL: none built). */

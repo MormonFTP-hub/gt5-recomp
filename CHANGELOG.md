@@ -7,7 +7,40 @@ release on the tested rig in [STATUS.md](STATUS.md) unless a day says otherwise.
 > or repeated frames (fixed on 4 Nov and 9 Nov), so treat them as rough before-and-after comparisons.
 > From 9 Nov on, numbers are the game's own frames.
 
+## 25 Nov 2026
+
+⏱️ **Test build 37: frames come evenly spaced** (the game looked less smooth than its frame rate said)
+- At a steady 60 frames a second the frames were not 16.7 ms apart: in a race they came anywhere from 12 to 21 ms apart, often a short one after a long one, and with frame generation the made frames inherited that (steps of 4 to 13 ms). The frame rate counter still said 60.
+- The cause was the port's own clock for the screen refresh ("vblank"), which the game starts every frame on. The port fired it from the loop that also walks the game's drawing commands: only after that loop's wait of up to 4 ms, and never while it was busy drawing, so each beat reached the game up to 4-8 ms late, by a different amount each time.
+- The beat now has a thread of its own that fires every 16.683 ms whatever else is going on, and that thread calls the game's refresh and flip handlers itself, as the PS3's own interrupt thread does.
+- Measured on the test PC over 300 race frames in a row, Europe 1.00, DirectX 12: with DLSS, frame generation 2x and vertical sync off, frames within 1 ms of 16.7 ms went from 22 % to 99 %, and the average change from one frame's time to the next from 5.1 ms to 0.4 ms. At default settings: 58 % to 99 %, 3.0 ms to 0.3 ms. The frame rate itself is unchanged.
+- `PS3_VBLANK_THREAD=0` in `settings.bat` puts the old clock back, for comparing.
+
 ## 24 Nov 2026
+
+🎥 **Test build 36: a free camera** (asked for on Discord: Arcade has no Photo Mode)
+- In a race or a replay, **F6** takes the camera off the car and lets you fly it anywhere; F6 again goes back. It starts exactly where the game's camera was, and the car gets no input meanwhile. Pause first (Start) to look around a frozen moment.
+- Keyboard and mouse: W A S D move, Q / E down and up, Shift faster, Ctrl slower, the mouse looks, the wheel (or + / -) zooms, the middle button (or R) puts the zoom back. Controller: left stick moves, right stick looks, the triggers go down and up, L1 / R1 slower and faster, the d-pad zooms, R3 puts the zoom back.
+- In-game menu, Game page: **Free camera** switches it, **Free camera key** changes F6. Off until you use it; the game is untouched until then.
+- Works on every renderer and release that has GT5's race camera (found by its name, checked on Europe 1.00, 2.11, 2.17 and Asia 1.00, 2.01; run on Europe 1.00 with DirectX 12 and Vulkan, in a race, paused, and in a replay). Not tried: a real mouse with the window in front, a real controller, North America.
+
+🖥️ **Resolution 5K in the 1080 video mode**: the right part of the 3D picture no longer goes black, and DLSS keeps working there (it switched itself off before) ([#57](https://github.com/MormonFTP-hub/gt5-recomp/issues/57), thanks Keduboneur78). The depth buffer may now hold two frames' worth of points (it was cut at one, which on the US 2.11 game's wider race picture cut the right part off), and when a picture is wider than DLSS takes, DLSS makes the largest one of the same shape it does take. Run on Europe 1.00 at a resolution high enough to reach both limits; the US 2.11 game itself could not be run here. DirectX 12 only (Vulkan already lowered the scale to fit).
+
+Checked on the test PC: the picture check, a race with DLSS, frame generation and a 1440p render target at 57-60 fps, as before.
+
+⚙️ **Test build 35: the SPU code runs without the run-time dispatcher**
+- In a race the converted SPU code asked the dispatcher "where does this branch go" about a million times every 5 seconds. On Europe 1.00 it is now about 3,800 times: the rest are answered at build time. What is left are interrupt returns and three return points that have to pass the dispatcher.
+- **This is not a speed-up**: two alternating before / after pairs on the test PC gave the same CPU use and the same frame rate. It is a step of making the SPU side static.
+- Every SPU program in the executable is now found by what it is, not by a list, and converted at setup. Setup says so plainly when one can't be prepared; a game copy nobody has converted yet falls back to converting what can be, as before.
+- **Game updates get it too.** On Europe 2.11 with the Master Mod, in a 16-car race at Rome, a copy updated and built the way a player's is went from about 1.5 million look-ups every 5 seconds to about 15,000. One job that only the updates have keeps 24 routines the converter doesn't convert (its jump table is longer than the converter reads), so the SPU interpreter stays in the game as the last resort: a build without it stopped that job and hung 2.11 on the test PC, and was never published. Converting those routines is written but not proven yet.
+- Checked on Europe 1.00: a compare race with every direct branch checked against the dispatcher (595 million in the car cull job, 197 million in the job manager, 155 million in the drawing job: 0 mismatches) and the picture check. Checked on Europe 2.11 with the Master Mod, in the test install after a player's update: a 16-car race at Rome at 56-58 fps, nothing interpreted in that run. Not run: North America, Asia, 2.01, 2.17.
+- Every copy converts the game code again once with this build (about 3 minutes on the test PC) and rebuilds.
+
+🖥️ **Ultrawide on game updates and the Asian disc**: the picture-shape constants were known for the European 1.00 disc only; they are now found by the code that reads them, on every release (2.11 and 2.17 keep three). Seen on Europe 2.11: menus stay a centred 16:9 block, the race view is wider with the HUD centred. Not run on the others.
+
+🧩 **One missing system function filled in** (`cellVideoOutGetScreenSize`, which only the game updates ask for).
+
+📝 **Shaders before the first start: tried, measured, not switched on.** The game can now look through all of its own files for shader programs without a window (18,813 files in about 6 minutes, 27,400 programs). But from a cold start over the same driven route, making nothing ahead gave 3 slow frames (1.4 s in all); every vertex shader ahead (44 s, 104 MB) gave 3 (1.2 s); four guessed variants of every pixel shader as well (18 minutes on 32 threads, 9.8 GB) gave 3 (2.5 s). The background compile and the stand-in already carry a first visit, so this stays a tool (`gt5.exe --collect-shaders`, off) and is not part of setup.
 
 🏷️ Released as **v0.1.116**
 
