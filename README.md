@@ -217,26 +217,33 @@ To play the previous build right away instead, copy `GT5\build\gt5.previous.exe`
 
 ### Test builds
 
-Changes still being tried out go to a **test build** first: the `test` branch of this repository, with
-no version number and no release. Releases, new installs and the launcher's Update never use it. To try it:
+Changes still being tried out go to a **test build** first, numbered (test build 39, 40, ...) and with no
+version number. Releases, new installs and **Update now** never use it: you only get one if you ask for it.
+
+**To try it:** in the launcher, **Updates**, the amber **Try test build N** button next to **Update now**.
+It is greyed ("No test build now") while there's none newer than the release. Or in your install folder:
 
 ```
 powershell -ExecutionPolicy Bypass -File update.ps1 -Test
 ```
 
-A plain update (`update.ps1`, `Update.bat` or the launcher's **Update now**) goes back to the newest
-release. What the current test build changes is at the top of
-[its CHANGELOG](https://github.com/MormonFTP-hub/gt5-recomp/blob/test/CHANGELOG.md) (the entries above
-the newest "Released as" line), and each new one is announced in
-[Announcements](https://github.com/MormonFTP-hub/gt5-recomp/discussions/categories/announcements) and in
-the Discord's releases channel. Expect rough edges, and say "test build" and its date when you report
-something.
+**To go back:** **Back to the release** (the **Update now** button while you're on a test build), or a
+plain `update.ps1` / `Update.bat`. Saves and settings stay either way.
+
+**What each one changes:** every test build has its own notes:
+- on the launcher's **Updates** page (the **Test build N** tab above the notes),
+- as a **pre-release** on the [Releases page](https://github.com/MormonFTP-hub/gt5-recomp/releases)
+  (tag `test-build-N`),
+- in the Discord's **#gt5-test-builds** channel, one post per test build.
+
+[Discussion #49](https://github.com/MormonFTP-hub/gt5-recomp/discussions/49) keeps the longer story. Expect
+rough edges, and say "test build N" when you report something.
 
 ### Other options
 
 | Command | What it does |
 |---|---|
-| `update.ps1 -Test` | The [test build](#test-builds): changes still being tried out. A plain update goes back. |
+| `update.ps1 -Test` | The [test build](#test-builds): changes still being tried out. A plain update goes back. It refuses when the test build is older than the newest release. |
 | `update.ps1 -Dev` | The newest changes, before they're released. |
 | `update.ps1 -NoBuild` | Switch versions without building; build later with `GT5\scripts\build.cmd gt5`. |
 | `update.ps1 -Force` | Re-generate and rebuild everything, even when nothing changed. |
@@ -446,6 +453,7 @@ If something is off, add a line to `GT5\settings.bat` (right-click it > Edit; up
 | Pedals, or the wheel's buttons, plug in with their own USB cable (a direct-drive base with separate pedals, a rim or button box of its own) | in the game, **F1** > **Controls** > **Wheel buttons and pedals**: **Pedals from** and **Buttons from** pick that device (Enter or Cross steps through the controllers found), then the rows below set its pedals and buttons by pressing them. Or in `settings.bat`: `set "PS3_WHEEL_PEDAL_DEVICE=<part of its name>"` and `set "PS3_WHEEL_BUTTON_DEVICE=<part of its name>"`, as the `[wheel] found` lines of `play.err` list them (its `VID:PID` works too). The base keeps the steering and the force feedback. Since v0.1.111 |
 | The pedals are on different devices (the throttle and clutch on one, the brake on another) | in the game, on the same page, press Enter on each pedal's row and push that pedal: the pedal keeps the device it was pushed on (the row shows its name). Or in `settings.bat`, a device per pedal over `PS3_WHEEL_PEDAL_DEVICE`: `set "PS3_WHEEL_BRAKE_DEVICE=<part of its name>"` (also `PS3_WHEEL_THROTTLE_DEVICE`, `PS3_WHEEL_CLUTCH_DEVICE`; `wheel` = the wheel's own), with each pedal's axis on its own device in `PS3_WHEEL_PEDALS`. Since v0.1.113 |
 | A pedal does nothing, or the wrong thing | `set "PS3_WHEEL_TRACE=1"`, press each pedal, and see which axis moves in the `[wheel] axes` lines of `play.err`; then e.g. `set "PS3_WHEEL_PEDALS=throttle=Y,brake=RZ,clutch=Z"` (add `inv` to one that works backwards: `brake=RZinv`) |
+| No clutch pedal, and braking hard in a manual car leaves it in neutral | update to v0.1.118 or later: a clutch that would sit on the throttle's or the brake's axis is left out by itself (`play.err` says so). Or say it outright: `set "PS3_WHEEL_PEDALS=throttle=Y,brake=RZ,clutch=none"` |
 | Throttle and brake swapped on a wheel whose pedals share one axis | `set "PS3_WHEEL_PEDALS=throttle=Yinv"` (`play.err` names the shared axis: `[wheel] throttle and brake share the Y axis`) |
 | A button is wrong | `set "PS3_WHEEL_BUTTONS=cross=1,circle=3,start=10"`, with button numbers as Windows' *Set up USB game controllers* window (`joy.cpl`) shows them; names: cross square circle triangle r1 l1 r2 l2 select start r3 l3 gear1..gear6 gearr plus minus dialcw dialccw, and up down left right for the d-pad |
 | No d-pad on the wheel, and you'd rather move through menus with buttons | `set "PS3_WHEEL_BUTTONS=up=7,down=8"` (any spare buttons; left= and right= too). Without it, the rim and pedals move through menus on such a wheel; `set "PS3_WHEEL_MENU=off"` turns that off |

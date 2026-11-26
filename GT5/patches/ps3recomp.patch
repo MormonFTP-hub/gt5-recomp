@@ -46440,7 +46440,7 @@ diff --git a/libs/hardware/wheel_host_win.c b/libs/hardware/wheel_host_win.c
 new file mode 100644
 --- /dev/null
 +++ b/libs/hardware/wheel_host_win.c
-@@ -0,0 +1,1989 @@
+@@ -0,0 +1,2037 @@
 +/*
 + * ps3recomp - the PC steering wheel behind the emulated G27 (see wheel.h)
 + *
@@ -46711,8 +46711,13 @@ new file mode 100644
 +                if (i < WHEEL_BTN_GEAR1) m->btn[i] = -1;
 +            for (int h = 0; h < 10; h++) m->btn[xb[h]] = h;
 +            m->pedal[1] = AX_Z; m->pedal[2] = AX_RZ;
-+        } else if (pid == 0xC299 || pid == 0xC29A || pid == 0xC29B || pid == 0xC298 || pid == 0xC294) {
-+            m->pedal[1] = AX_Z; m->pedal[2] = AX_RZ;              /* G25 / DFGT / G27 / DFP */
++        } else if (pid == 0xC298) {
++            /* [clutch2] Driving Force Pro: two pedals, throttle Y and brake RZ, no Z and no clutch
++             * (a player's log, 26 Nov 2026: axes X Y RZ, the slider idle in the middle). Under the
++             * G27 layout its brake pedal was the clutch. */
++            m->pedal[1] = AX_RZ; m->pedal[2] = AX_NONE;
++        } else if (pid == 0xC299 || pid == 0xC29A || pid == 0xC29B || pid == 0xC294) {
++            m->pedal[1] = AX_Z; m->pedal[2] = AX_RZ;              /* G25 / DFGT / G27 / DF */
 +        }
 +    }
 +    const char* e = getenv("PS3_WHEEL_STEER");
@@ -46746,6 +46751,48 @@ new file mode 100644
 +            for (int p = 0; p < 3; p++) if (m->pbtn[p] == m->btn[i]) taken = 1;
 +            if (taken) m->btn[i] = -1;
 +        }
++    }
++}
++
++/* [clutch2] Whether PS3_WHEEL_PEDALS names pedal p (0 throttle, 1 brake, 2 clutch): what it names is kept as given. */
++static int pedal_named(int p)
++{
++    const char* e = getenv("PS3_WHEEL_PEDALS");
++    if (!e || !*e) return 0;
++    static const char* const pn[3] = { "throttle", "brake", "clutch" };
++    char buf[256]; snprintf(buf, sizeof buf, "%s", e); lower(buf);
++    const char* at = strstr(buf, pn[p]);
++    return at && at[strlen(pn[p])] == '=';
++}
++
++/* [clutch2] Two-pedal wheels, once the axes the wheel doesn't have are gone from the map.
++ * - A brake whose usual axis the wheel doesn't have, next to a clutch axis it does have: that is a two-pedal
++ *   wheel's brake on the axis the layout gave the clutch. It brakes, and there is no clutch.
++ * - A clutch on the throttle's or the brake's own axis presses the clutch with that pedal: in a manual car a
++ *   hard stop left the gearbox in neutral for good (a Driving Force Pro with brake=RZ set and the clutch left
++ *   on RZ, its default; Discord, 26 Nov 2026). The clutch goes.
++ * Nothing PS3_WHEEL_PEDALS names is changed (clutch=none says "no clutch" outright). */
++static void pedals_settle(WheelMap* m)
++{
++    const int bn = pedal_named(1), cn = pedal_named(2);
++    const int ca = m->pedal[2];
++    if (!bn && !cn && m->pedal[1] == AX_NONE && ca >= 0 && m->pbtn[1] < 0 &&
++        pedal_src(1) < 0 && ca != m->pedal[0]) {
++        m->pedal[1] = ca; m->pedal[2] = AX_NONE;
++        fprintf(stderr, "[wheel] this wheel has no axis where the brake usually is: its second pedal (%s) is the brake, "
++                        "and there is no clutch pedal (PS3_WHEEL_PEDALS=brake=<axis>,clutch=<axis> sets them)\n",
++                k_axis_name[ca]);
++        return;
++    }
++    if (cn || ca < 0) return;
++    static const char* const pn[2] = { "throttle", "brake" };
++    for (int p = 0; p < 2; p++) {
++        if (m->pedal[p] != ca) continue;
++        m->pedal[2] = AX_NONE;
++        fprintf(stderr, "[wheel] the clutch was on the %s's axis (%s): no clutch, so the %s doesn't press it "
++                        "(PS3_WHEEL_PEDALS=clutch=<axis> names a clutch pedal of its own)\n",
++                pn[p], k_axis_name[ca], pn[p]);
++        return;
 +    }
 +}
 +
@@ -47236,6 +47283,7 @@ new file mode 100644
 +        if (s_map.pedal[p] >= 0 && !s_axis_present[s_map.pedal[p]]) s_map.pedal[p] = AX_NONE;
 +    /* A pedal on a device of its own: not from the wheel's axes; xd_open maps that device's. */
 +    for (int p = 0; p < 3; p++) if (pedal_src(p) >= 0) s_map.pedal[p] = AX_NONE;
++    pedals_settle(&s_map);
 +    s_rest_known = 0;
 +    s_rest_wait = 0;
 +    s_split = 0;

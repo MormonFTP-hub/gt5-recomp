@@ -7,6 +7,22 @@ release on the tested rig in [STATUS.md](STATUS.md) unless a day says otherwise.
 > or repeated frames (fixed on 4 Nov and 9 Nov), so treat them as rough before-and-after comparisons.
 > From 9 Nov on, numbers are the game's own frames.
 
+## 26 Nov 2026
+
+🏷️ Released as **v0.1.118**
+
+🛞 **No clutch pedal? Braking hard no longer leaves a manual car in neutral** (thanks JohnnyGusta)
+- On a wheel without a clutch pedal, the port could put the clutch on the brake's own axis. Pressing the brake past about 80 % then also pressed the clutch, and in a manual car the gearbox went to neutral and stayed there (a Logitech Driving Force Pro). A clutch that would sit on the throttle's or the brake's axis is now left out, and `play.err` says so. A clutch you name in `PS3_WHEEL_PEDALS` is kept as given; `clutch=none` says "no clutch" outright.
+- The Driving Force Pro gets a layout of its own: throttle Y, brake RZ, no clutch. Before, its brake pedal was taken as the clutch unless the pedals were set by hand.
+- A two-pedal wheel whose brake isn't where the usual layout puts it now uses its second pedal as the brake.
+- Checked with a test of the pedal mapping on ten layouts (his Driving Force Pro before and after, a G27, pedals named and not); not tried with a real wheel here.
+
+🧪 **Test builds are easy to find, and every one has its notes**
+- The launcher's **Updates** page has a **Try test build N** button right next to **Update now**: amber when there's a test build newer than the release, greyed ("No test build now") otherwise, with a line saying what a test build is. It asks once before switching.
+- On a test build, **Update now** reads **Back to the release**, and a newer test build shows as **Update to test build N**. Saves and settings stay either way.
+- Every test build has its own notes: on the launcher's Updates page (a **Test build N** tab beside the release's notes), as a **pre-release** on GitHub's Releases page (tag `test-build-N`), and as a post in the Discord's new **#gt5-test-builds** channel.
+- `update.ps1 -Test` no longer takes a copy back to a test build older than the newest release: it says so and stays.
+
 ## 25 Nov 2026
 
 🏷️ Released as **v0.1.117**

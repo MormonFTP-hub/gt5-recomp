@@ -513,6 +513,25 @@ namespace Gt5Launcher
             { "upd.notes", new[] { "What's new", "更新内容" } },
             { "upd.running", new[] { "The game is running: close it before updating.", "游戏正在运行：请先关闭游戏再更新。" } },
             { "upd.nogit", new[] { "Updating needs an install made by the installer.", "需要由安装程序创建的安装才能更新。" } },
+            // Test builds next to Update now: what is being tried before the next release, with its own notes.
+            { "upd.test.try", new[] { "Try test build {0}", "试用测试版 {0}" } },
+            { "upd.test.update", new[] { "Update to test build {0}", "更新到测试版 {0}" } },
+            { "upd.test.none", new[] { "No test build now", "目前没有测试版" } },
+            { "upd.test.on", new[] { "On the test build", "正在使用测试版" } },
+            { "upd.back", new[] { "Back to the release", "回到正式版" } },
+            { "upd.test.line", new[] { "Test build {0} ({1}): changes still being tried before the next release. Its notes are below. Update now goes back to the release at any time.",
+                                       "测试版 {0}（{1}）：下一个正式版之前仍在试用的改动。说明见下方。随时可用“立即更新”回到正式版。" } },
+            { "upd.test.line.none", new[] { "Test builds: none newer than the release right now. New ones are posted in #gt5-test-builds on the Discord.",
+                                            "测试版：目前没有比正式版更新的测试版。新的测试版会发布在 Discord 的 #gt5-test-builds。" } },
+            { "upd.test.line.on", new[] { "You're on test build {0}. Back to the release (or Update now) returns to the release; saves and settings stay.",
+                                          "你正在使用测试版 {0}。“回到正式版”（或“立即更新”）会回到正式版；存档和设置都会保留。" } },
+            { "upd.notes.release", new[] { "Release {0}", "正式版 {0}" } },
+            { "upd.notes.test", new[] { "Test build {0}", "测试版 {0}" } },
+            { "upd.test.ask", new[] { "Try test build {0}?", "试用测试版 {0}？" } },
+            { "upd.test.ask.text", new[] { "A test build has changes still being tried out, so something may be wrong that the release gets right. Saves and settings stay, and Update now goes back to the release at any time.",
+                                           "测试版包含仍在试用的改动，可能有正式版里没有的问题。存档和设置都会保留，随时可用“立即更新”回到正式版。" } },
+            { "upd.test.ask.yes", new[] { "Try it", "试用" } },
+            { "devtest", new[] { "test build", "测试版" } },
             // The update window
             { "uw.title", new[] { "Updating Gran Turismo 5", "正在更新 Gran Turismo 5" } },
             { "uw.start", new[] { "Starting the update", "正在开始更新" } },
@@ -2547,6 +2566,12 @@ namespace Gt5Launcher
         Label status, versionLabel, updateBadge, latestLabel, installedLabel;
         TextBox notes;
         FlatButton updateButton;
+        // The test build beside Update now (a GitHub pre-release named test-build-<n>, made by ship-test.ps1).
+        FlatButton testButton, notesRelBtn, notesTestBtn;
+        Label testLabel;
+        string testTag = "", testBody = "", testDate = "", relBody = "";
+        bool testNewer;
+        static readonly Color Amber = Color.FromArgb(196, 128, 36), AmberHot = Color.FromArgb(222, 152, 56);
         string page = "nav.play";
         volatile bool running;
         string latestTag = "";
@@ -3603,32 +3628,114 @@ namespace Gt5Launcher
             var check = new FlatButton(T.Get("upd.check"), Look.Panel, Look.NavHot) { Location = new Point(0, y), Size = new Size(150, 38) };
             check.Click += delegate { CheckForUpdates(true); };
             updateButton = new FlatButton(T.Get("upd.now"), Look.Blue, Color.FromArgb(90, 160, 240)) { Location = new Point(162, y), Size = new Size(170, 38), Font = Look.F(10.5f, FontStyle.Bold) };
-            updateButton.Click += delegate { RunUpdate(); };
+            updateButton.Click += delegate { RunUpdate(null); };
             p.Controls.Add(check); p.Controls.Add(updateButton);
-            SetUpdateButton(latestTag != "" && Newer(latestTag, P.InstalledVersion()));
-            y += 50;
+            // The test build, right beside Update now: greyed while there is none newer than the release.
+            testButton = new FlatButton(T.Get("upd.test.none"), Look.Panel, Look.NavHot) { Location = new Point(344, y), Size = new Size(240, 38), Font = Look.F(10.5f, FontStyle.Bold) };
+            testButton.Click += delegate { AskTestBuild(); };
+            p.Controls.Add(testButton);
+            y += 46;
+            testLabel = new Label { AutoSize = false, Location = new Point(0, y), Size = new Size(700, 40), ForeColor = Look.Dim, Font = Look.F(9.5f, FontStyle.Regular), Text = T.Get("upd.test.line.none") };
+            p.Controls.Add(testLabel);
+            y += 44;
             p.Controls.Add(new Label { Text = T.Get("upd.notes"), AutoSize = true, Location = new Point(0, y + 4), Font = Look.F(10.5f, FontStyle.Bold), ForeColor = Look.Text });
+            // Which notes the box shows: the release's or the test build's (only while there is a test build to show).
+            notesRelBtn = new FlatButton("", Look.NavHot, Look.NavHot) { Location = new Point(130, y), Size = new Size(170, 28), Font = Look.F(9f, FontStyle.Regular), Visible = false };
+            notesTestBtn = new FlatButton("", Look.Panel, Look.NavHot) { Location = new Point(306, y), Size = new Size(170, 28), Font = Look.F(9f, FontStyle.Regular), Visible = false };
+            notesRelBtn.Click += delegate { ShowNotes(false); };
+            notesTestBtn.Click += delegate { ShowNotes(true); };
+            p.Controls.Add(notesRelBtn); p.Controls.Add(notesTestBtn);
             notes = new TextBox { Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Vertical, BackColor = Look.Panel, ForeColor = Look.Text, BorderStyle = BorderStyle.None, Location = new Point(0, y + 32), Size = new Size(700, 170), Font = Look.F(9f, FontStyle.Regular) };
             p.Controls.Add(notes);
+            SetUpdateButton(latestTag != "" && Newer(latestTag, P.InstalledVersion()));
+            SetTestButton();
             // The release notes take the room the window gives them (at least as before).
             var nb = notes;
             p.Resize += delegate
             {
                 if (nb.IsDisposed) return;
                 nb.Width = Math.Min(1100, Math.Max(700, p.ClientSize.Width - 4));   // wider than that is hard to read
+                if (testLabel != null && !testLabel.IsDisposed) testLabel.Width = nb.Width;
                 nb.Height = Math.Max(170, p.ClientSize.Height - (nb.Top - p.AutoScrollPosition.Y) - 8);
             };
             return p;
         }
 
-        // Update now is the blue button to press only when a newer release is there; otherwise it is greyed.
+        // Update now is the blue button to press only when a newer release is there; otherwise it is greyed. On a test
+        // build it always takes the copy back to the release: "Back to the release" while no newer release is out.
         void SetUpdateButton(bool newer)
         {
             if (updateButton == null || updateButton.IsDisposed) return;
-            updateButton.Enabled = newer;
-            updateButton.Normal = newer ? Look.Blue : Look.Panel;
+            bool test = OnTestBuild();
+            bool on = newer || test;
+            updateButton.Text = test && !newer ? T.Get("upd.back") : T.Get("upd.now");
+            updateButton.Enabled = on;
+            updateButton.Normal = on ? Look.Blue : Look.Panel;
             updateButton.BackColor = updateButton.Normal;
-            updateButton.ForeColor = newer ? Look.Text : Look.Dim;
+            updateButton.ForeColor = on ? Look.Text : Look.Dim;
+        }
+
+        // update.ps1 names a test build by its pre-release's tag (test-build-<n>, which ship-test.ps1 puts on it).
+        bool OnTestBuild() { return P.InstalledVersion().StartsWith("test-build-", StringComparison.OrdinalIgnoreCase); }
+        static string TestNumber(string tag) { return Regex.Replace(tag ?? "", "^test-build-", "", RegexOptions.IgnoreCase); }
+
+        // The test build's button and line: amber while a test build newer than the release is there to try (or, on a
+        // test build, a newer one); otherwise greyed, and the line says so.
+        void SetTestButton()
+        {
+            if (testButton == null || testButton.IsDisposed) return;
+            bool test = OnTestBuild();
+            string inst = P.InstalledVersion(), n = TestNumber(testTag);
+            bool offer = testNewer && !(test && string.Equals(inst, testTag, StringComparison.OrdinalIgnoreCase));
+            testButton.Text = offer ? string.Format(T.Get(test ? "upd.test.update" : "upd.test.try"), n) : T.Get(test ? "upd.test.on" : "upd.test.none");
+            testButton.Enabled = offer;
+            testButton.Normal = offer ? Amber : Look.Panel;
+            testButton.FlatAppearance.MouseOverBackColor = testButton.FlatAppearance.MouseDownBackColor = offer ? AmberHot : Look.NavHot;
+            testButton.BackColor = testButton.Normal;
+            testButton.ForeColor = offer ? Look.Text : Look.Dim;
+            if (testLabel != null)
+            {
+                testLabel.Text = test ? string.Format(T.Get("upd.test.line.on"), TestNumber(inst))
+                               : testNewer ? string.Format(T.Get("upd.test.line"), n, testDate) : T.Get("upd.test.line.none");
+                testLabel.ForeColor = test || testNewer ? Look.Text : Look.Dim;
+            }
+            bool both = testBody != "" && (testNewer || test);
+            if (notesRelBtn != null)
+            {
+                notesRelBtn.Visible = notesTestBtn.Visible = both;
+                if (both)
+                {
+                    notesRelBtn.Text = string.Format(T.Get("upd.notes.release"), latestTag);
+                    notesTestBtn.Text = string.Format(T.Get("upd.notes.test"), n);
+                }
+            }
+        }
+
+        // The notes box shows the release's notes, or the test build's.
+        void ShowNotes(bool test)
+        {
+            if (notes == null || notes.IsDisposed) return;
+            notes.Text = PlainText(test ? testBody : relBody);
+            if (notesRelBtn != null)
+            {
+                // The notes shown: its tab lit, the other one dim.
+                notesRelBtn.Normal = notesRelBtn.BackColor = test ? Look.Bg : Look.NavHot;
+                notesTestBtn.Normal = notesTestBtn.BackColor = test ? Look.NavHot : Look.Bg;
+                notesRelBtn.ForeColor = test ? Look.Dim : Look.Text;
+                notesTestBtn.ForeColor = test ? Look.Text : Look.Dim;
+            }
+        }
+
+        // Try the test build: one question first (it may be rougher than the release), then update.ps1 -Test.
+        void AskTestBuild()
+        {
+            if (testTag == "" || !testNewer) return;
+            if (strip.Busy) { status.Text = T.Get("busy"); return; }
+            if (GameRunning() || running) { strip.Note("upd.now", "upd.running"); return; }
+            string n = TestNumber(testTag);
+            if (OnTestBuild()) { RunUpdate("-Test"); return; }   // already trying test builds: straight to the newer one
+            strip.Ask(string.Format(T.Get("upd.test.ask"), n), "upd.test.ask.text", "upd.test.ask.yes", "ask.notnow",
+                      delegate { if (!GameRunning() && !running) RunUpdate("-Test"); }, null);
         }
 
         Panel BuildHelpPage()
@@ -3786,6 +3893,7 @@ namespace Gt5Launcher
         {
             string v = P.InstalledVersion();
             if (v.StartsWith("development build")) v = T.Get("devbuild") + " " + v.Substring("development build".Length).Trim();
+            if (v.StartsWith("test-build-")) v = T.Get("devtest") + " " + TestNumber(v);
             // No version recorded (a copy not made by the installer): nothing, rather than a question mark.
             versionLabel.Text = v == "" ? "" : T.Get("version") + ": " + v;
             if (installedLabel != null) installedLabel.Text = v == "" ? "" : T.Get("upd.installed") + ":  " + v;
@@ -3826,6 +3934,7 @@ namespace Gt5Launcher
             var th = new Thread(delegate ()
             {
                 string tag = "", body = "", date = "", err = "";
+                string ttag = "", tbody = "", tdate = "";   // the newest test build (a pre-release), if any
                 try
                 {
                     ServicePointManager.SecurityProtocol = (SecurityProtocolType)3072;   // TLS 1.2
@@ -3833,12 +3942,23 @@ namespace Gt5Launcher
                     {
                         wc.Headers[HttpRequestHeader.UserAgent] = "GT5-Launcher";
                         wc.Encoding = Encoding.UTF8;
-                        string json = wc.DownloadString("https://api.github.com/repos/MormonFTP-hub/gt5-recomp/releases/latest");
-                        var d = new JavaScriptSerializer().Deserialize<Dictionary<string, object>>(json);
-                        object o;
-                        if (d.TryGetValue("tag_name", out o) && o != null) tag = o.ToString();
-                        if (d.TryGetValue("body", out o) && o != null) body = o.ToString();
-                        if (d.TryGetValue("published_at", out o) && o != null) date = o.ToString();
+                        // Newest first: the first release that isn't a pre-release, and the first pre-release (a test build).
+                        // GT5_LAUNCHER_RELEASES_FILE (tests): the list from a file instead of GitHub.
+                        string fake = Environment.GetEnvironmentVariable("GT5_LAUNCHER_RELEASES_FILE");
+                        string json = !string.IsNullOrEmpty(fake) && File.Exists(fake) ? File.ReadAllText(fake, Encoding.UTF8)
+                                    : wc.DownloadString("https://api.github.com/repos/MormonFTP-hub/gt5-recomp/releases?per_page=12");
+                        var list = new JavaScriptSerializer().Deserialize<List<Dictionary<string, object>>>(json);
+                        foreach (var d in list)
+                        {
+                            object o;
+                            if (d.TryGetValue("draft", out o) && o is bool && (bool)o) continue;
+                            bool pre = d.TryGetValue("prerelease", out o) && o is bool && (bool)o;
+                            string tg = d.TryGetValue("tag_name", out o) && o != null ? o.ToString() : "";
+                            string bd = d.TryGetValue("body", out o) && o != null ? o.ToString() : "";
+                            string dt = d.TryGetValue("published_at", out o) && o != null ? o.ToString() : "";
+                            if (pre) { if (ttag == "" && tg.StartsWith("test-build-")) { ttag = tg; tbody = bd; tdate = dt; } }
+                            else if (tag == "") { tag = tg; body = bd; date = dt; }
+                        }
                     }
                 }
                 catch (Exception e) { err = e.Message; }
@@ -3854,14 +3974,25 @@ namespace Gt5Launcher
                             latestLabel.Text = T.Get("upd.latest") + ":  " + T.Get("upd.failed");
                             return;
                         }
-                        DateTime when;
-                        string d2 = DateTime.TryParse(date, CultureInfo.InvariantCulture, DateTimeStyles.AdjustToUniversal, out when) ? when.ToString("d MMM yyyy", CultureInfo.InvariantCulture) : "";
-                        bool newer = Newer(tag, inst);
-                        latestLabel.Text = T.Get("upd.latest") + ":  " + tag + (d2 != "" ? "  (" + d2 + ")" : "") + "   " + (newer ? "" : T.Get("upd.uptodate"));
-                        notes.Text = PlainText(body);
+                        DateTime when, twhen;
+                        bool hasWhen = DateTime.TryParse(date, CultureInfo.InvariantCulture, DateTimeStyles.AdjustToUniversal, out when);
+                        bool hasT = DateTime.TryParse(tdate, CultureInfo.InvariantCulture, DateTimeStyles.AdjustToUniversal, out twhen) && ttag != "";
+                        string d2 = hasWhen ? when.ToString("d MMM yyyy", CultureInfo.InvariantCulture) : "";
+                        // A test build counts while it came out after the newest release (each one is made from that release).
+                        testTag = ttag; testBody = tbody; relBody = body;
+                        testNewer = hasT && (!hasWhen || twhen > when);
+                        testDate = hasT ? twhen.ToString("d MMM", CultureInfo.InvariantCulture) : "";
+                        bool test = OnTestBuild();
+                        // On a test build, a release is newer when it came out after the newest test build.
+                        bool newer = test ? hasWhen && (!hasT || when > twhen) : Newer(tag, inst);
+                        latestLabel.Text = T.Get("upd.latest") + ":  " + tag + (d2 != "" ? "  (" + d2 + ")" : "") + "   " + (newer || test ? "" : T.Get("upd.uptodate"));
                         updateBadge.Text = string.Format(T.Get("upd.available"), tag);
                         updateBadge.Visible = newer;
                         SetUpdateButton(newer);
+                        SetTestButton();
+                        // The notes of what the next press of the lit button gets: a test build on offer (or the one
+                        // installed) shows its notes first; the other notes are one click away.
+                        ShowNotes(testBody != "" && !newer && (testNewer || test));
                         PlaceHeaderRight((Panel)updateBadge.Parent);
                         if (showPage) ShowPage("nav.updates");
                     });
@@ -4299,7 +4430,9 @@ namespace Gt5Launcher
             StartJob(j);
         }
 
-        void RunUpdate()
+        void RunUpdate() { RunUpdate(null); }
+        // extra: an update.ps1 option for the update window ("-Test" for the test build), or null for the release.
+        void RunUpdate(string extra)
         {
             if (strip.Busy) { status.Text = T.Get("busy"); return; }
             if (GameRunning() || running) { strip.Note("upd.now", "upd.running"); return; }
@@ -4314,7 +4447,8 @@ namespace Gt5Launcher
                 try
                 {
                     File.Copy(Application.ExecutablePath, copy, true);
-                    var w = new ProcessStartInfo(copy, string.Format("--update-window \"{0}\" \"{1}\"", P.Root, Application.ExecutablePath));
+                    var w = new ProcessStartInfo(copy, string.Format("--update-window \"{0}\" \"{1}\"{2}", P.Root, Application.ExecutablePath,
+                                                                     string.IsNullOrEmpty(extra) ? "" : " " + extra));
                     w.WorkingDirectory = P.Root; w.UseShellExecute = false;
                     Process.Start(w);
                     Close();

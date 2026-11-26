@@ -151,7 +151,16 @@ if (-not $Here -and -not $AfterSwitch) {
         # The test build: a branch of its own that releases never point at.
         git -C $base fetch --quiet origin "+refs/heads/test:refs/remotes/origin/test"
         if ($LASTEXITCODE -ne 0) { Fail "there is no test build at the moment" }
+        # Each test build is made from the newest release. One made before it (the branch left behind by a release)
+        # would take this copy back to older code: say so and stay.
+        $newest = git -C $base tag --list "v*" --sort=-v:refname | Select-Object -First 1
+        if ($newest) {
+            git -C $base merge-base --is-ancestor "$newest^{commit}" origin/test 2>$null
+            if ($LASTEXITCODE -ne 0) { Fail "there is no test build newer than $newest at the moment: a plain update keeps you on $newest" }
+        }
         $target = "origin/test"; $label = "the test build"
+        $tt = git -C $base tag --points-at origin/test --list "test-build-*" | Select-Object -First 1
+        if ($tt) { $label = "test build " + ($tt -replace '^test-build-', '') }
     } elseif ($Dev) {
         $target = "origin/main"; $label = "the newest development build"
     } elseif ($Version) {
