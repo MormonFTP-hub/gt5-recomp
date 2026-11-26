@@ -382,7 +382,8 @@ especially: the port was tuned on one desktop with an NVIDIA card.
 | Force feedback? | 🧪 New, with wheel support, also untried on a real wheel |
 | Widescreen (16:9)? | ✅ Yes, GT5 is a 16:9 game |
 | Ultrawide (21:9, 32:9)? | ✅ New: a wider view, with the HUD kept 16:9 in the middle |
-| Wider cockpit view, seat position? | ✅ New: the launcher's Game > Cockpit view ([more](#cockpit-view)) |
+| Wider cockpit view, seat position? | ✅ New: the launcher's Game > Camera ([more](#cockpit-view)) |
+| A free camera? | ✅ New: **F6** in a race or a replay ([more](#free-camera)) |
 | Which controllers? | ✅ DualSense, DualShock 4, Xbox pads, keyboard; new: [keys of your choice](#keyboard-keys), [steering with the mouse](#mouse-steering) |
 | US copy (BCUS98114)? | ✅ Yes, players have raced on it |
 | Version 1.02, or a game update (2.xx)? | 🧪 New: game updates run: 2.17 (the last) tested on the US and European releases, 2.01 on the Asian one, 2.11 with the Master Mod on the US one by a player ([how to set one up](#game-updates)); 1.02 untried |
@@ -448,6 +449,7 @@ If something is off, add a line to `GT5\settings.bat` (right-click it > Edit; up
 | Throttle and brake swapped on a wheel whose pedals share one axis | `set "PS3_WHEEL_PEDALS=throttle=Yinv"` (`play.err` names the shared axis: `[wheel] throttle and brake share the Y axis`) |
 | A button is wrong | `set "PS3_WHEEL_BUTTONS=cross=1,circle=3,start=10"`, with button numbers as Windows' *Set up USB game controllers* window (`joy.cpl`) shows them; names: cross square circle triangle r1 l1 r2 l2 select start r3 l3 gear1..gear6 gearr plus minus dialcw dialccw, and up down left right for the d-pad |
 | No d-pad on the wheel, and you'd rather move through menus with buttons | `set "PS3_WHEEL_BUTTONS=up=7,down=8"` (any spare buttons; left= and right= too). Without it, the rim and pedals move through menus on such a wheel; `set "PS3_WHEEL_MENU=off"` turns that off |
+| No H-shifter, so no reverse gear | in the game, **F1** > **Controls** > **Wheel buttons and pedals**: pick **Shifter: reverse** and press a spare wheel button. Manual gearbox: hold it with a little throttle and R comes within about 2 s; the shift-up paddle goes back to 1st. Automatic: hold it with the throttle from a standstill and R comes after a few seconds. Or `set "PS3_WHEEL_BUTTONS=gearr=7"` |
 | No Start button on the wheel (to pause) | give Start a spare button: `set "PS3_WHEEL_BUTTONS=start=8"` (the defaults put Start on button 10, which smaller wheels don't have) |
 | No pedals plugged in, or a broken one | a button can be a pedal: `set "PS3_WHEEL_BUTTONS=brake=4"` brakes fully while button 4 is held (`throttle=` and `clutch=` too) |
 | No H-shifter, and you want reverse | `set "PS3_WHEEL_BUTTONS=gearr=6"`: holding button 6 is the shifter's R. GT5 takes it with the manual gearbox (MT): hold it and accelerate to back up, then a shift-up paddle puts you in 1st again. With the automatic gearbox GT5 ignores it |
@@ -485,21 +487,47 @@ the picture stays 16:9 for now, and `logs\play.err` says so in a `[widescreen]` 
 <a id="cockpit-view"></a>
 **Q: Can I widen the cockpit view, or move the seat?**
 
-**A: Yes, new: the [launcher](#launcher)'s Game page, under Cockpit view.** On a PS3 the view from
+**A: Yes, new: the [launcher](#launcher)'s Game page, under Camera.** On a PS3 the view from
 the driver's seat is fixed: GT5 shows every car's cockpit at 52.4° from the top of the screen to the
 bottom, with the eye where the car's own data puts the driver. The port can widen (or narrow) that view
-and move the eye forward, back, up or down. Only the cockpit view changes: the chase, bumper and roof
-views and the menus stay as they are. All three are off by default, and then nothing changes.
+and move the eye forward, back, up or down. These three change only the cockpit view: the chase, bumper
+and roof views and the menus stay as they are. All are off by default, and then nothing changes.
 
 | In `play.bat` (or `settings.bat`) | What you get |
 |---|---|
 | `set "PS3_COCKPIT_FOV=20"` | the cockpit view 20° wider, top to bottom (72.4° instead of 52.4°; the sides widen with it); negative is narrower |
 | `set "PS3_COCKPIT_SEAT=10"` | the eye 10 cm further forward, toward the windscreen; negative moves it back |
 | `set "PS3_COCKPIT_HEIGHT=5"` | the eye 5 cm higher; negative is lower |
+| `set "PS3_OUTSIDE_FOV=20"` | the bumper, roof and chase views 20° wider; negative is narrower (since v0.1.117) |
 
 `logs\play.err` has a `[cockpit]` line with the game's number and the new one. The in-car camera is found
 by its name in the game's code, so this isn't tied to one release: tested on the European disc, and the
 same camera code is in the 2.17 update and the Asian disc and 2.01.
+
+The outside views have a setting of their own, in the same Camera group and on the Game page of the F1
+menu ("Outside views: field of view"), which changes them while you race. The cockpit view and its
+mirror, the replay's TV cameras, the [free camera](#free-camera) and the menus don't change with it; the
+small rear-view mirror at the top of the bumper view does. Tried on the European disc 1.00.
+
+<a id="free-camera"></a>
+**Q: Can I move the camera freely (Arcade has no Photo Mode)?**
+
+**A: Yes, new: press F6 in a race or a replay.** The view leaves the car and flies where you steer it;
+**F6** again goes back to the game's camera. It starts exactly where the game's camera was, and the car
+gets no input while it is on. Pause first (Start) to look around a frozen moment.
+
+| | Keyboard and mouse | Controller |
+|---|---|---|
+| Move | `W` `A` `S` `D`, `Q` / `E` down and up | left stick, the triggers down and up |
+| Look | the mouse | right stick |
+| Faster / slower | `Shift` / `Ctrl` | R1 / L1 |
+| Zoom | the mouse wheel, or `+` / `-` | d-pad up and down |
+| Zoom back | the middle button, or `R` | R3 |
+
+The in-game menu's Game page has **Free camera** (on / off) and **Free camera key** (another key than F6).
+It is off until you use it, and the game is untouched until then. Run on the European disc with DirectX 12
+and Vulkan; the game's race camera is found by its name, and the same code is in 2.11, 2.17, the Asian disc
+and 2.01.
 
 **Q: What resolution does it render at?**
 
@@ -1155,6 +1183,12 @@ so the launcher's settings win. Some useful ones:
 | `PS3_WHEEL=off` | Don't look for a steering wheel. The other `PS3_WHEEL_*` settings are in the [FAQ](#faq). |
 | `PS3_MOUSE_STEER=1` | Steer with the mouse in races (left button throttle, right brake). Its other settings are under [Mouse steering](#mouse-steering). |
 | `PS3_COCKPIT_FOV=20` | The cockpit view 20° wider (negative: narrower); `PS3_COCKPIT_SEAT` and `PS3_COCKPIT_HEIGHT` move the eye (cm forward, cm up). See [Cockpit view](#cockpit-view). |
+| `PS3_OUTSIDE_FOV=20` | The bumper, roof and chase views 20° wider (negative: narrower). See [Cockpit view](#cockpit-view). |
+| `LD_VX_RUN=0` | Vertices are converted the way they were before 25 Nov (slower, same result); `2` converts both ways and counts differences in the `[vertex-run]` log line. |
+| `LD_REC_BATCH=0` | Calls reach the recording thread one at a time again, as before 25 Nov. |
+| `LD_VX_ASYNC=1` | A helper thread converts small draws' vertices while the drawing thread goes on. Off by default: it keeps one more core busy for a small gain. |
+| `LD_VC_RANGE=1` | Converted vertices are also kept by their arrays alone, for draws whose triangle list is new every frame. Off by default: where it was measured the game moves the vertices too. |
+| `PS3_VBLANK_THREAD=0` | The screen-refresh clock the game starts its frames on comes from the drawing loop again, as before 25 Nov (frames then come 12 to 21 ms apart at 60 a second). By default it has a thread of its own and frames are 16.7 ms apart. |
 | `PS3_KEYS=cross:W,square:Space,...` | Your own keyboard keys, `button:key` pairs (the launcher's Controls page writes it). Button and key names are under [Your own keys](#keyboard-keys). |
 | `PS3_KEYS_ARROWS=split` | Where the arrow keys go. By default (without mouse steering or a wheel) the d-pad only: a tap moves one place in the menus, and in a race GT5 eases into the steering as it does with a PS3 pad's d-pad. `split`: Left/Right push the left stick (full lock at once), Up/Down press the d-pad, as before 18 Nov. With mouse steering or a wheel the default follows the game: d-pad only at the menus, d-pad and stick in a race. `both`: always both (a menu tap moves two places). |
 | `PS3_KEYS_WITH_PAD=0` | The keyboard is off while a pad is connected (by default both work together). |

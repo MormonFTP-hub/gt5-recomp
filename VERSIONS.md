@@ -6,6 +6,7 @@ the launcher's Updates page shows the newest one's notes.
 
 | Version | Date | What changed |
 |---|---|---|
+| [v0.1.117](https://github.com/MormonFTP-hub/gt5-recomp/releases/tag/v0.1.117) | 25 Nov 2026 | The game's own data install no longer stops at 18 % (#59), night cockpit at 4K/5K no longer too dark (#51), split screen with DLSS (#50), PS4 pad over Bluetooth (#58), free camera, outside-view field of view, evenly spaced frames, 5K picture whole (#57) |
 | [v0.1.116](https://github.com/MormonFTP-hub/gt5-recomp/releases/tag/v0.1.116) | 24 Nov 2026 | Move the game to another drive (an SSD) without installing it again |
 | [v0.1.115](https://github.com/MormonFTP-hub/gt5-recomp/releases/tag/v0.1.115) | 24 Nov 2026 | Setup needs only your game: no PS3 system software file, and RPCS3 is not used anywhere (updates, DLC packages and executables handled by the port's own tool) |
 | [v0.1.114](https://github.com/MormonFTP-hub/gt5-recomp/releases/tag/v0.1.114) | 24 Nov 2026 | Linux: no more black screen at start when the sound goes through PulseAudio or PipeWire (#20) |

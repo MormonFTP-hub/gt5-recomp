@@ -62,8 +62,19 @@ Run "setjmp_patch"   @("scripts\setjmp_patch.py")
 # A GT5\spu from an older version may have a closed permission list: fix_spu_access.ps1 puts it right.
 & (Join-Path $PSScriptRoot "fix_spu_access.ps1")
 if ($LASTEXITCODE -ne 0) { exit 1 }
-Run "spu_programs"   @("$tk\build_spu_workloads.py", "--input", "input\EBOOT.elf", "--lifted", "spu",
-                       "--out", "spu\spu_workloads.c", "--constructor", "--allow-partial")
+# Every SPU program has to be converted whole (the interpreter is only the last resort): one that is not
+# stops the setup here with build_spu_workloads.py's report (spu\inventory.json), not the game later.
+# A release nobody has converted yet may hold a program the converter can't take whole: then it is
+# converted as far as it goes, as it was before 24 Nov 2026, and the line below says so (setup still
+# finishes; that program would not run, and no game run has ever started one of them).
+try {
+    Run "spu_programs"   @("$tk\build_spu_workloads.py", "--input", "input\EBOOT.elf", "--lifted", "spu",
+                           "--out", "spu\spu_workloads.c", "--constructor")
+} catch {
+    Write-Output "  An SPU program of this copy could not be converted whole (spu\inventory.json says which): converting what can be."
+    Run "spu_programs"   @("$tk\build_spu_workloads.py", "--input", "input\EBOOT.elf", "--lifted", "spu",
+                           "--out", "spu\spu_workloads.c", "--constructor", "--allow-partial")
+}
 Run "spu_jobs_find"  @("scripts\spu_jobs_from_eboot.py")
 if (Get-ChildItem "analysis\spu_miss\spujob_*.bin" -ErrorAction SilentlyContinue) {
     Run "spu_jobs"   @("scripts\lift_spu_jobs.py")

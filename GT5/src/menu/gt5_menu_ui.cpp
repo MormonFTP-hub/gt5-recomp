@@ -20,9 +20,48 @@
 
 #include "imgui_internal.h"   // NavMoveRequestCancel, NavMoveRequestTryWrapping, ScrollToRect, ImTextCharFromUtf8
 
+// [freecam] GT5/src/gt5_freecam.cpp
+extern "C" int gt5_freecam_on(void);
+extern "C" int gt5_freecam_set(int on);
+extern "C" int gt5_freecam_found(void);
+// [outfov] GT5/src/gt5_cockpit.cpp
+extern "C" int gt5_outside_fov_found(void);
+
 namespace gt5m {
 
 namespace {
+
+// [freecam] The free camera's two rows on the Game page. Not in the settings registry: the first is the
+// camera itself, on or off now (never saved); the second its key (GT5_FREECAM_KEY in settings.bat, F6 when
+// not set). Shown only when the executable has one.
+const gt5_setting_def k_freecam_rows[] = {
+    { "GT5_FREECAM", GT5_SET_BOOL, GT5_APPLY_LIVE, GT5_PAGE_GAME, 0, "",
+      "Free camera", "自由视角",
+      "Race or replay: WASD and mouse, or the sticks.",
+      "比赛或回放中：WASD 加鼠标，或摇杆。",
+      "1", "", 0, 0, 0, 0, NULL, NULL, 0 },
+    { "GT5_FREECAM_KEY", GT5_SET_STRING, GT5_APPLY_LIVE, GT5_PAGE_GAME, 0, "",
+      "Free camera key", "自由视角按键",
+      NULL, NULL,
+      NULL, NULL, 0, 0, 0, 0, NULL, NULL, 0 },
+};
+
+// [outfov] The outside views' field of view, under the cockpit view's on the Game page. Not in the
+// settings registry: PS3_OUTSIDE_FOV in settings.bat, read by gt5_cockpit.cpp at once. Shown only when the
+// executable has the race camera it needs.
+const gt5_choice k_ch_outside_fov[] = {     /* (launcher) ofov, the same steps as the cockpit's */
+    { "",    "As in the game", "游戏原样", 0 },
+    { "-10", "10° narrower", "缩小 10°", 0 }, { "-5", "5° narrower", "缩小 5°", 0 },
+    { "5",   "5° wider", "加宽 5°", 0 },   { "10", "10° wider", "加宽 10°", 0 }, { "15", "15° wider", "加宽 15°", 0 },
+    { "20",  "20° wider", "加宽 20°", 0 }, { "25", "25° wider", "加宽 25°", 0 }, { "30", "30° wider", "加宽 30°", 0 },
+    { "40",  "40° wider", "加宽 40°", 0 },
+};
+const gt5_setting_def k_outside_fov_row = {
+    "PS3_OUTSIDE_FOV", GT5_SET_CHOICE, GT5_APPLY_LIVE, GT5_PAGE_GAME, 0, "",
+    "Outside views: field of view", "车外视角：视野",
+    "Bumper, roof and chase views. The cockpit view has its own row.",
+    "保险杠、车顶和追尾视角。车内视角另有设置。",
+    NULL, NULL, 0, 0, 0, 0, NULL, k_ch_outside_fov, (int)(sizeof k_ch_outside_fov / sizeof k_ch_outside_fov[0]) };
 
 // The launcher's colours (GT5Launcher.cs, class Look), so the two look like one program.
 const ImVec4 kBg(14 / 255.f, 16 / 255.f, 22 / 255.f, 0.97f);
@@ -381,6 +420,7 @@ const char* row_idle_reason(const char* key)
 // renderer is doing with it, or that it counts after a restart. Nothing for a row that simply works.
 void status_line(const gt5_setting_def* d, bool unavailable, const char* idle, float wrap_x)
 {
+    if (!gt5_settings_find(d->key)) return;   // [freecam] the menu's own rows apply at once: nothing to say
     gt5_menu_stats st;
     const bool have = stats_get(&st);
     // The anti-aliasing row says what the renderer says: why DLSS can't be used here (no plug-in, the
@@ -525,6 +565,20 @@ void setting_row(const gt5_setting_def* d, const PadEdges& pad)
             bind_begin(BIND_MENU_KEY, 0, false);
         if (waiting) ImGui::PopStyleColor();
         focused = ImGui::IsItemFocused(); hovered = ImGui::IsItemHovered();
+    } else if (!strcmp(d->key, "GT5_FREECAM")) {
+        // [freecam] on or off now: it starts when the menu closes, from where the game's camera is
+        bool v = gt5_freecam_on() != 0;
+        if (toggle(&v, &focused, &hovered)) gt5_freecam_set(v ? 1 : 0);
+    } else if (!strcmp(d->key, "GT5_FREECAM_KEY")) {
+        char name[48];
+        if (!_stricmp(cur, "none")) snprintf(name, sizeof name, "%s", T("None", "无"));
+        else key_names(cur[0] ? cur : "F6", name, sizeof name);
+        const bool waiting = ui.bind == BIND_FREECAM_KEY;
+        if (waiting) ImGui::PushStyleColor(ImGuiCol_Button, kAccent);
+        if (value_button(waiting ? T("Press a key...", "请按一个键...") : name, widget_w) && !waiting)
+            bind_begin(BIND_FREECAM_KEY, 0, false);
+        if (waiting) ImGui::PopStyleColor();
+        focused = ImGui::IsItemFocused(); hovered = ImGui::IsItemHovered();
     } else switch (d->type) {
     case GT5_SET_BOOL: {
         bool v = !_stricmp(cur, d->on_value ? d->on_value : "1");
@@ -584,6 +638,9 @@ void setting_row(const gt5_setting_def* d, const PadEdges& pad)
     const ImVec2 item_max = ImGui::GetItemRectMax();
     if (focused) { g_rows.any_focus = true; set_help_setting(d); note_focus(d->key); }
     else if (hovered && !ui.keyboard_last) set_help_setting(d);
+    // [freecam] a row of the menu's own (not in the registry): its help as plain text
+    if ((focused || (hovered && !ui.keyboard_last)) && !gt5_settings_find(d->key))
+        set_help_text(help_of(d) ? help_of(d) : "");
     float bottom = label_bottom > item_max.y ? label_bottom : item_max.y;
 
     // In a low window there is no box for the help under the page: the row with the focus shows its
@@ -733,7 +790,11 @@ void settings_page(int page, const PadEdges& pad)
         const gt5_setting_def* d = gt5_settings_at(i);
         if (d->page != page || !has_row(d, true)) continue;
         setting_row(d, pad);
+        if (!strcmp(d->key, "PS3_COCKPIT_FOV") && gt5_outside_fov_found())   // [outfov] next to the cockpit's
+            setting_row(&k_outside_fov_row, pad);
     }
+    if (page == GT5_PAGE_GAME && gt5_freecam_found())        // [freecam]
+        for (const gt5_setting_def& d : k_freecam_rows) setting_row(&d, pad);
     pending_note();
 }
 
@@ -1297,6 +1358,14 @@ void ui_key_taken(const char* name)
     } else if (ui.bind == BIND_MENU_KEY) {
         if (name && strncmp(name, "Mouse", 5)) { gt5_setting_set("GT5_MENU_KEY", !strcmp(name, "F1") ? "" : name); note_changed(); }
         snprintf(ui.focus_key, sizeof ui.focus_key, "GT5_MENU_KEY");
+    } else if (ui.bind == BIND_FREECAM_KEY) {
+        // [freecam] Delete or Backspace: no key (the row above still switches it)
+        if (name && strncmp(name, "Mouse", 5)) {
+            const bool none = !_stricmp(name, "Delete") || !_stricmp(name, "Backspace");
+            gt5_setting_set("GT5_FREECAM_KEY", none ? "none" : !strcmp(name, "F6") ? "" : name);
+            note_changed();
+        }
+        snprintf(ui.focus_key, sizeof ui.focus_key, "GT5_FREECAM_KEY");
     }
     ui.bind = BIND_NONE;
 }

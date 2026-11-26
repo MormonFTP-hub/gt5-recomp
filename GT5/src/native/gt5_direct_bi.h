@@ -17,7 +17,13 @@
  * confirmation (gt5_dbi_route). GT5_DIRECT_BI_XIMAGE=0: each image's own entries only, as before. Also from
  * n_jobmgr: a branch while an interrupt's registers are saved goes direct too unless it is the return to the
  * interrupted point (the only case the dispatcher's interrupt-return check acts on), and the runtime's
- * interrupt path takes the job manager's handler body directly (g_spu_direct_dispatch, gt5_dbi_ctx_branch). */
+ * interrupt path takes the job manager's handler body directly (g_spu_direct_dispatch, gt5_dbi_ctx_branch).
+ *
+ * static2_spu (24 Nov 2026): a call through a register goes direct without the drain loop's conditions (a pending
+ * interrupt, the run's first step: the dispatcher a lifted `bisl` calls acts on neither); the confirmation verifies
+ * a pending resident code slot itself, as the dispatcher's resolver does at the first dispatch into it (so the job
+ * manager's call of a job it has just loaded goes direct); gt5_dbi_call_at / gt5_dbi_branch_at give code that is not
+ * a lifted image's own (the generated natives, src/native/wgen_gen.py) the same direct calls and branches. */
 #ifndef GT5_DIRECT_BI_H
 #define GT5_DIRECT_BI_H
 #include <stdint.h>
@@ -61,7 +67,17 @@ extern SPU_THREAD_LOCAL gt5_dbi_memo t_gt5_dbi[2];
 extern gt5_dbi_image* g_gt5_dbi_by_id[256];   /* the registered images by image id */
 extern int g_gt5_dbi_xroute;                  /* GT5_DIRECT_BI_XIMAGE: 1 (default) cross-image routes, 0 off */
 
+extern int g_gt5_direct_bi;                   /* GT5_DIRECT_BI: -1 unread, 0, 1, 2 (the narrowed interrupt fallbacks
+                                                 of spu_native_patch.py read it: 0 = as before) */
 void gt5_dbi_register(gt5_dbi_image* im);
+/* static2_spu: a call (host_depth counted, as at a lifted `bisl`: replaces `spu_indirect_branch(ctx)` there) / a
+ * branch (a trampoline the drain calls: replaces spu_indirect_branch as g_spu_trampoline_fn) to ctx->pc through the
+ * switch of the image the dispatcher resolves it in -- the first resident code slot over it, else the context's
+ * image -- with that image's ready check and confirmation; anything else is the dispatcher's. */
+void gt5_dbi_call_at(spu_context* ctx);
+void gt5_dbi_branch_at(spu_context* ctx);
+int spu_code_slot_verify(spu_context* ctx, unsigned slot);   /* spu_channels.c: the resolver's slot verification */
+uint32_t spu_dcache_sign_ctx(spu_context* ctx);               /* spu_channels.c: the dispatcher's signing (4b) */
 gt5_dbi_image* gt5_dbi_find(const char* name);
 int gt5_dbi_confirm(spu_context* ctx, const gt5_dbi_image* im);
 int gt5_dbi_check(spu_context* ctx, gt5_dbi_image* im);
@@ -77,6 +93,12 @@ int spu_wws_irq_stub_direct(spu_context* ctx);
  * take it plainly: not the return to an interrupted point (an interrupt's registers saved, interrupts on,
  * the pc at its resume point: the dispatcher's interrupt-return check), no task resident, the image's
  * entries confirmed for the context's present resident code, image and overlay. */
+/* static2_spu: why a direct transfer left its target to the dispatcher, for the recorder (SPU_TARGET_LOG,
+ * spu_channels.c): 1 a drain-step condition, 2 the interrupted point, 3 the slot not verified, 4 another owner,
+ * 5 not one of the image's entries, 6 no image to route to. Written on those fallback paths only. */
+extern SPU_THREAD_LOCAL uint32_t g_spu_lk_pc;
+extern SPU_THREAD_LOCAL int g_spu_lk_why;
+#define GT5_DBI_LK(pc, why) (g_spu_lk_pc = (pc) & SPU_LS_MASK, g_spu_lk_why = (why))
 static inline int gt5_dbi_step_ok(const spu_context* ctx)
 {
     const uint32_t pc = ctx->pc;
@@ -85,11 +107,42 @@ static inline int gt5_dbi_step_ok(const spu_context* ctx)
            !(ctx->irq_saved && ctx->int_enable && (pc & SPU_LS_MASK) == (ctx->irq_resume_pc & SPU_LS_MASK)) &&
            !ctx->resident_task;
 }
+/* A call through a register (static2_spu): the lift calls the dispatcher right there (`spu_indirect_branch(ctx)` in
+ * the call bracket), not from the drain loop, so the drain's per-step conditions -- an interrupt pending with
+ * interrupts on, the run's first step -- do not apply: the dispatcher would call the function all the same. What it
+ * does instead of a plain call still sends the call to it: the return to an interrupted point, a stack-reset entry,
+ * a resident task. */
+static inline int gt5_dbi_call_ok(const spu_context* ctx)
+{
+    const uint32_t pc = ctx->pc;
+    return g_spu_direct > 0 && !g_spu_stack_reset_hint[(pc >> 2) & 1023u] &&
+           !(ctx->irq_saved && ctx->int_enable && (pc & SPU_LS_MASK) == (ctx->irq_resume_pc & SPU_LS_MASK)) &&
+           !ctx->resident_task;
+}
+static inline int gt5_dbi_confirmed(spu_context* ctx, const gt5_dbi_image* im)
+{
+    const uint32_t pc = ctx->pc;
+    const gt5_dbi_memo* m = &t_gt5_dbi[im->kind & 1];
+    if (m->ctx == ctx && m->img == im && m->id == ctx->dcache_id && m->res == ctx->dcache_residency &&
+        m->iid == ctx->image_id && m->ovl == ctx->resident_ovl && pc - m->lo < m->hi - m->lo)
+        return 1;
+    return gt5_dbi_confirm(ctx, im);
+}
+static inline int gt5_dbi_ready_call(spu_context* ctx, const gt5_dbi_image* im)
+{
+    if (!gt5_dbi_call_ok(ctx)) {
+        GT5_DBI_LK(ctx->pc, ctx->irq_saved && ctx->int_enable && (ctx->pc & SPU_LS_MASK) == (ctx->irq_resume_pc & SPU_LS_MASK) ? 2 : 1);
+        return 0;
+    }
+    return gt5_dbi_confirmed(ctx, im);
+}
 static inline int gt5_dbi_ready(spu_context* ctx, const gt5_dbi_image* im)
 {
     const uint32_t pc = ctx->pc;
-    if (!gt5_dbi_step_ok(ctx))
+    if (!gt5_dbi_step_ok(ctx)) {
+        GT5_DBI_LK(pc, ctx->irq_saved && ctx->int_enable && (pc & SPU_LS_MASK) == (ctx->irq_resume_pc & SPU_LS_MASK) ? 2 : 1);
         return 0;
+    }
     const gt5_dbi_memo* m = &t_gt5_dbi[im->kind & 1];
     if (m->ctx == ctx && m->img == im && m->id == ctx->dcache_id && m->res == ctx->dcache_residency &&
         m->iid == ctx->image_id && m->ovl == ctx->resident_ovl && pc - m->lo < m->hi - m->lo)

@@ -2,19 +2,31 @@
 """Find GT5's SPU job images in this copy's EBOOT, for lift_spu_jobs.py to compile.
 
 GT5 hands most of its SPU work (physics, sound, graphics set-up) to SPURS as raw job images
-stored inside EBOOT.elf. Each one is found here by its hashes (no game data is stored in this
-script) and written to analysis/spu_miss under the name the runtime would have dumped it with,
-the fingerprint the runtime registers it by. lift_spu_jobs.py then lifts them to C, and the build
-compiles them in. A job that isn't compiled in can't run: the runtime drops it, and whatever
-waits on it stalls (a black screen after the logos, for one in the game updates).
+stored inside EBOOT.elf. Each one is written to analysis/spu_miss under the name the runtime would
+have dumped it with, the fingerprint the runtime registers it by (FNV-1a of its bytes). lift_spu_jobs.py
+then lifts them to C, and the build compiles them in.
 
-The list is the European release (BCES00569, disc 01.00), which the other discs share, plus the
-versions the game updates (2.xx) changed. A copy needs one version of each job; the summary says
-how many it has.
+How they are found (static2_spu, 24 Nov 2026: by what they are, not by a list). A SPURS job binary and a
+policy module start with a 16-byte identifier made of four `ila $r2` instructions; a job binary has its
+entry header right after it (job_entry_header below); a Wws job (0xC0DEC0DE at +0x20) is lift_spu_jobs.py's and
+is left out here. Every such start in the EBOOT's loaded segments is a candidate. Its size is the one the
+game keeps next to its address (a word with the address, then a word with the size, as the game's job
+table holds them), rounded up as the runtime's DMA takes it: 16 bytes for a job binary, 128 for a policy
+module. For the few the EBOOT gives no size next to their address, the size the known list below has
+for those bytes (no game data is stored in this script: hashes and sizes only). The list also checks
+that nothing it names is lost: every job of the European release (BCES00569, disc 01.00), which the
+other discs share, in one of its versions (the game updates' 2.xx versions are listed too).
+
+A job binary the game points at that cannot be sized, two sizes for one image, or a listed job found only
+by its hash (the scan missed it) fail this step with a plain line: setup stops there, instead of the game
+stalling at a black screen later. A candidate the game never points at, and policy-module-like code with no
+size stated for it (no game run has ever started one), are reported and left out; a listed job that is not
+in this EBOOT at all is reported as before (the 2.xx EBOOTs carry two of the disc's sound jobs elsewhere).
 
     python scripts/spu_jobs_from_eboot.py [input/EBOOT.elf]
 """
 import hashlib
+import struct
 import sys
 from pathlib import Path
 
@@ -54,31 +66,134 @@ UPDATED = [
 ]
 
 
+def job_entry_header(b):
+    """The 32 bytes after the identifier of a SPURS job binary: two entry stubs (the same instruction word,
+    each followed by a relative branch), then 16 zero bytes. A policy module has its own code there."""
+    w = struct.unpack(">8I", b)
+    return w[0] != 0 and w[0] == w[2] and (w[1] >> 23) == 0x64 and (w[3] >> 23) == 0x64 and not any(w[4:])
+
+
+def fingerprint(blob):
+    """The runtime's fingerprint of an image (spu_workload.c spu_workload_fingerprint: FNV-1a 64)."""
+    h = 1469598103934665603
+    for b in blob:
+        h = ((h ^ b) * 1099511628211) & 0xFFFFFFFFFFFFFFFF
+    return f"{h:016X}"
+
+
+def loaded_segments(data):
+    """(file offset, address, size) of each loaded segment with bytes in the file."""
+    phoff = struct.unpack(">Q", data[0x20:0x28])[0]
+    phnum = struct.unpack(">H", data[0x38:0x3A])[0]
+    segs = []
+    for i in range(phnum):
+        kind, _, off, va, _, fsz, _, _ = struct.unpack(">IIQQQQQQ", data[phoff + i * 56:phoff + i * 56 + 56])
+        if kind == 1 and fsz:
+            segs.append((off, va, fsz))
+    return segs
+
+
+def candidates(data, segs):
+    """Every SPURS job binary / policy module start: {address: (file offset, "job" | "pm")}."""
+    out = {}
+    for off, va, fsz in segs:
+        for o in range(off, off + fsz - 0x40, STEP):
+            w = struct.unpack(">8I", data[o:o + 32])
+            if not all((x >> 25) == 0x21 and (x & 0x7F) == 2 for x in w[:4]):
+                continue
+            if struct.unpack(">I", data[o + 0x20:o + 0x24])[0] == 0xC0DEC0DE:
+                continue                      # a Wws job: lift_spu_jobs.py finds and lifts those
+            out[va + o - off] = (o, "job" if job_entry_header(data[o + 0x10:o + 0x30]) else "pm")
+    return out
+
+
+def references(data, segs, addrs):
+    """{address: (sizes stated next to it, times it is pointed at at all)} over the loaded segments."""
+    sizes = {a: set() for a in addrs}
+    seen = {a: 0 for a in addrs}
+    for off, va, fsz in segs:
+        blk = data[off:off + fsz]
+        for i in range(0, len(blk) - 8, 4):
+            a = int.from_bytes(blk[i:i + 4], "big")
+            if a in seen:
+                seen[a] += 1
+                s = int.from_bytes(blk[i + 4:i + 8], "big")
+                if 0x30 < s <= 0x40000:
+                    sizes[a].add(s)
+    # an address loaded in two halves by the code (lis/ori, lis/addi) or kept unaligned counts as pointed at
+    for a in addrs:
+        if not seen[a] and data.find(a.to_bytes(4, "big")) >= 0:
+            seen[a] = 1
+    return {a: (sizes[a], seen[a]) for a in addrs}
+
+
 def main():
     eboot = Path(sys.argv[1]) if len(sys.argv) > 1 else ROOT / "input" / "EBOOT.elf"
     data = eboot.read_bytes()
-    by_prefix = {}
-    for job in JOBS + UPDATED:
-        by_prefix.setdefault(job[2], []).append(job[:4])
-    found = {}
+    segs = loaded_segments(data)
     sha1 = hashlib.sha1
+    known = {}                                   # 64-byte prefix SHA-1 -> [(fingerprint, size, whole SHA-1)]
+    for job in JOBS + UPDATED:
+        known.setdefault(job[2], []).append(job[:4])
+    cands = candidates(data, segs)
+    refs = references(data, segs, cands)
+    found, failed, left_out, unsized, by_hash_only = {}, [], [], [], []
+    for ea, (o, kind) in sorted(cands.items()):
+        stated, pointed = refs[ea]
+        align = 16 if kind == "job" else 128
+        sizes = sorted({(s + align - 1) & ~(align - 1) for s in stated if o + ((s + align - 1) & ~(align - 1)) <= len(data)})
+        listed = [(fp, size) for fp, size, _, full in known.get(sha1(data[o:o + PREFIX]).hexdigest(), [])
+                  if sha1(data[o:o + size]).hexdigest() == full]
+        if len(sizes) == 1:
+            blob = data[o:o + sizes[0]]
+            found[fingerprint(blob)] = (o, blob, "stated")
+        elif len(sizes) > 1 and listed:
+            # two different words follow its address somewhere: the known list says which one is its size
+            fp, size = listed[0]
+            found[fp] = (o, data[o:o + size], "known")
+        elif len(sizes) > 1:
+            failed.append(f"the SPU {kind} at 0x{ea:08X} has {len(sizes)} sizes stated for it ({', '.join(hex(s) for s in sizes)})")
+        elif listed:
+            fp, size = listed[0]
+            found[fp] = (o, data[o:o + size], "known")
+        elif pointed and kind == "job":
+            failed.append(f"the SPU job at 0x{ea:08X} is used by the game, but its size is nowhere next to its address")
+        elif pointed:
+            unsized.append(ea)
+        else:
+            left_out.append(ea)
+    # what the list names must all be there (its hashes, wherever they are: a safety net for the scan)
     for off in range(0, len(data) - PREFIX, STEP):
-        cands = by_prefix.get(sha1(data[off:off + PREFIX]).hexdigest())
-        if not cands:
-            continue
-        for fp, size, _, full in cands:
+        for fp, size, _, full in known.get(sha1(data[off:off + PREFIX]).hexdigest(), []):
             if fp not in found and sha1(data[off:off + size]).hexdigest() == full:
-                found[fp] = (off, data[off:off + size])
+                found[fp] = (off, data[off:off + size], "list only")
+                by_hash_only.append(fp)       # used as before; said below, so the scan can be put right
     OUT.mkdir(parents=True, exist_ok=True)
-    for fp, (off, blob) in sorted(found.items()):
+    for fp, (off, blob, how) in sorted(found.items()):
         (OUT / f"spujob_{fp}_{len(blob)}.bin").write_bytes(blob)
     have = set(found) | {old for fp, *_, old in UPDATED if fp in found}
     missing = [fp for fp, *_ in JOBS if fp not in have]
-    new = [fp for fp, *_, old in UPDATED if old is None and fp in found]
-    print(f"SPU jobs found in {eboot.name}: {len(JOBS) - len(missing)} of {len(JOBS)}"
-          + (f", plus {len(new)} that only game updates have" if new else ""))
-    for fp in missing:
-        print(f"  not found: {fp} (or a version of it this script doesn't know yet; the game stalls when it needs it)")
+    new = [fp for fp in found if fp not in {j[0] for j in JOBS + UPDATED}]
+    upd = [fp for fp, *_, old in UPDATED if old is None and fp in found]
+    print(f"SPU jobs found in {eboot.name}: {len(found)} ({sum(1 for v in found.values() if v[2] == 'stated')} sized by the game's "
+          f"own table, {sum(1 for v in found.values() if v[2] == 'known')} by the known list); {len(JOBS) - len(missing)} of the "
+          f"{len(JOBS)} the list names" + (f", plus {len(upd)} that only game updates have" if upd else "")
+          + (f", plus {len(new)} the list does not know" if new else ""))
+    if left_out:
+        print(f"  left out, the game never points at them: {len(left_out)} piece(s) of SPU code at "
+              + ", ".join(f"0x{a:08X}" for a in left_out))
+    if unsized:
+        print(f"  left out, no size stated for them (no game run has started one): {len(unsized)} policy-module-like piece(s) "
+              f"of SPU code at " + ", ".join(f"0x{a:08X}" for a in unsized))
+    if by_hash_only:
+        print(f"  found by the known list only, not by their header (please report this line): {', '.join(by_hash_only)}")
+    for fp in missing:   # (as before: the 2.xx EBOOTs carry two of the disc's sound jobs elsewhere)
+        print(f"  not in this EBOOT: {fp} (or a version of it this script knows)")
+    if failed:
+        print("A part of the game's SPU code could not be prepared, so the game would stop when it needs it:")
+        for f in failed:
+            print(f"  - {f}")
+        sys.exit(1)
 
 
 if __name__ == "__main__":

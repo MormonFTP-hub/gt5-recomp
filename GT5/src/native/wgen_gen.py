@@ -25,6 +25,10 @@ the targets of its calls, the addresses it builds as function pointers) is ONE C
   - interrupts are tested only where one can have become pending (after a channel access, a call into the
     runtime or a procedure that does one, a branch that enables them), at the same addresses as the lift;
   - every other instruction is the lift's own C expression for it.
+static2_spu (24 Nov 2026): a runtime call and an in-place hand-back reach their target through the direct switch of
+the image the dispatcher resolves it in (native_wgen.h WG_CALL_AT / WG_TRAMP: gt5_direct_bi.c gt5_dbi_call_at /
+gt5_dbi_branch_at, that image's own ready check and confirmation), not through the dispatcher's lookup: the
+hand-written natives this code calls where they hook, the job manager's API, the lifted stretches.
 Hand-back: where the native code cannot go on (an interrupt to take, a branch to an address that is neither
 the caller's return address nor one of its labels or procedures, a stop or halt, an instruction it does not
 translate), it stores its registers and returns that address; each caller stores its own and returns it
@@ -769,7 +773,7 @@ class Gen:
         self.stats["handback"] += 1
         if self.cur["rt"]:
             return (f"{{ {self.STO} WG_HB_IN(ctx, WG_HB_{why}, {pc_expr}); {{ int32_t _si = (int32_t)ctx->image_id; "
-                    f"ctx->pc = {pc_expr}; g_spu_trampoline_fn = spu_indirect_branch; ctx->host_depth++; spu_drain_call(ctx, _E); "
+                    f"ctx->pc = {pc_expr}; g_spu_trampoline_fn = WG_TRAMP({pc_expr}); ctx->host_depth++; spu_drain_call(ctx, _E); "
                     f"ctx->host_depth--; spu_img_restore(ctx, _si); }} return ctx->pc & SPU_LS_MASK; }}")
         return f"{{ {self.STO} WG_HB(ctx, WG_HB_{why}, {pc_expr}); return {pc_expr}; }}"
 
@@ -825,7 +829,7 @@ class Gen:
                     f"WG_RT(ctx); gt5_{self.img}_spu_func_{t:08X}_sv(ctx); spu_drain_call(ctx, 0x{ret:X}u); ctx->host_depth--; "
                     f"spu_img_restore(ctx, _si); }} {self.ld(self.cur['used'])}"]
         return [f"{self.st(self.cur['wrote'])} {{ int32_t _si = (int32_t)ctx->image_id; ctx->pc = {tg}; ctx->host_depth++; "
-                f"WG_RT(ctx); spu_indirect_branch(ctx); spu_drain_call(ctx, 0x{ret:X}u); ctx->host_depth--; "
+                f"WG_RT(ctx); WG_CALL_AT(ctx); spu_drain_call(ctx, 0x{ret:X}u); ctx->host_depth--; "
                 f"spu_img_restore(ctx, _si); }} {self.ld(self.cur['used'])}"]
 
     def local_switch(self, p, var):

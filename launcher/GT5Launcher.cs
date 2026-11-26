@@ -396,10 +396,12 @@ namespace Gt5Launcher
             { "renderer.vk", new[] { "Vulkan (experimental)", "Vulkan（实验性）" } },
             // Under Renderer while Vulkan is chosen: the rows it does nothing with yet are greyed.
             { "renderer.dx12only", new[] { "Greyed settings need DirectX 12.", "灰色的设置需要 DirectX 12。" } },
-            { "cockpit", new[] { "Cockpit view", "车内视角" } },
+            { "camera", new[] { "Camera", "视角" } },
             { "cockpit.game", new[] { "As in the game", "游戏原样" } },
-            { "cfov", new[] { "Field of view", "视野" } },
+            { "cfov", new[] { "Cockpit field of view", "车内视野" } },
             { "cfov.help", new[] { "", "" } },
+            { "ofov", new[] { "Outside views' field of view", "车外视野" } },
+            { "ofov.help", new[] { "Bumper, roof and chase views.", "保险杠、车顶和追尾视角。" } },
             { "cfov.wider", new[] { "{0}° wider", "加宽 {0}°" } },
             { "cfov.narrower", new[] { "{0}° narrower", "缩小 {0}°" } },
             { "cseat", new[] { "Seat forward / back", "座椅前后" } },
@@ -692,6 +694,7 @@ namespace Gt5Launcher
             new[] { "PS3_MOUSE_STEER", "" }, new[] { "PS3_MOUSE_STEER_SENS", "" }, new[] { "PS3_MOUSE_STEER_CENTER", "" },
             new[] { "PS3_KEYS", "" },
             new[] { "PS3_COCKPIT_FOV", "" }, new[] { "PS3_COCKPIT_SEAT", "" }, new[] { "PS3_COCKPIT_HEIGHT", "" },
+            new[] { "PS3_OUTSIDE_FOV", "" },
         };
         // True when there was no settings.bat yet: the launcher's first start on this install.
         public bool Fresh;
@@ -3050,6 +3053,7 @@ namespace Gt5Launcher
             var cb = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, FlatStyle = FlatStyle.Flat, BackColor = Look.Panel, ForeColor = Look.Text, Location = new Point(250, y), Width = 300,
                                     DrawMode = DrawMode.OwnerDrawFixed, ItemHeight = 22 };
             cb.DrawItem += DrawDarkItem;
+            WheelScrollsPage(cb);
             foreach (var c in choices) cb.Items.Add(c);
             var prev = new[] { SelectValue(cb, key, S.Get(key)) };
             cb.SelectedIndex = prev[0];
@@ -3084,13 +3088,37 @@ namespace Gt5Launcher
             y += 34;
             return helpKey != null ? AddHelp(p, T.Get(helpKey), y - 2, 250) : y + 6;
         }
-        // A number typed or stepped with the arrows (Up/Down, the mouse wheel); the default value saves as nothing.
+        // The mouse wheel over a list or a number scrolled the page until it reached one, then changed that setting:
+        // Windows sends the wheel to whatever is under the pointer, so scrolling down the Display page could switch
+        // Renderer to Vulkan without a click. Now the wheel over a closed list, or over a number box the player hasn't
+        // clicked into, scrolls the page like anywhere else; an open list and a number being edited still take it.
+        static void WheelScrollsPage(Control c)
+        {
+            c.MouseWheel += delegate(object sender, MouseEventArgs e)
+            {
+                var cb = c as ComboBox;
+                if (cb != null ? cb.DroppedDown : c.ContainsFocus) return;
+                var h = e as HandledMouseEventArgs;
+                if (h != null) h.Handled = true;
+                for (Control p = c.Parent; p != null; p = p.Parent)
+                {
+                    var sp = p as ScrollableControl;
+                    if (sp == null || !sp.AutoScroll) continue;
+                    // As a page scrolls itself: the wheel's own distance, kept inside the page.
+                    sp.AutoScrollPosition = new Point(-sp.AutoScrollPosition.X, Math.Max(0, -sp.AutoScrollPosition.Y - e.Delta));
+                    break;
+                }
+            };
+        }
+        // A number typed or stepped with the arrows (Up/Down, the mouse wheel once clicked into); the default value saves
+        // as nothing.
         int AddNumber(Panel p, string labelKey, string helpKey, string key, decimal min, decimal max, decimal step, decimal def, int decimals, string unit, int y)
         {
             int c0 = p.Controls.Count, y0 = y;
             p.Controls.Add(new Label { Text = T.Get(labelKey), AutoSize = true, Location = new Point(0, y + 4), ForeColor = Look.Text });
             var n = new NumericUpDown { Minimum = min, Maximum = max, Increment = step, DecimalPlaces = decimals, BackColor = Look.Panel, ForeColor = Look.Text,
                                         BorderStyle = BorderStyle.FixedSingle, Location = new Point(250, y), Width = 90, TextAlign = HorizontalAlignment.Right };
+            WheelScrollsPage(n);
             Func<decimal> stored = delegate
             {
                 decimal cur;
@@ -3494,10 +3522,11 @@ namespace Gt5Launcher
             var p = NewPage(); int y = 0;
             y = AddHeading(p, T.Get("nav.game"), y);
             // In the game's order (its Game page): the cockpit view, the language, the opening movie.
-            // Cockpit view (GT5\src\gt5_cockpit.cpp): "" = the game's own camera.
-            p.Controls.Add(new Label { Text = T.Get("cockpit"), Font = Look.F(11f, FontStyle.Bold), ForeColor = Look.Text, AutoSize = true, Location = new Point(0, y + 2) });
+            // Camera: the cockpit view and the outside views (GT5\src\gt5_cockpit.cpp): "" = the game's own camera.
+            p.Controls.Add(new Label { Text = T.Get("camera"), Font = Look.F(11f, FontStyle.Bold), ForeColor = Look.Text, AutoSize = true, Location = new Point(0, y + 2) });
             y += 34;
             y = AddCombo(p, "cfov", "cfov.help", "PS3_COCKPIT_FOV", CockpitChoices(new[] { -10, -5, 5, 10, 15, 20, 25, 30, 40 }, "cfov.wider", "cfov.narrower"), y);
+            y = AddCombo(p, "ofov", "ofov.help", "PS3_OUTSIDE_FOV", CockpitChoices(new[] { -10, -5, 5, 10, 15, 20, 25, 30, 40 }, "cfov.wider", "cfov.narrower"), y);
             y = AddCombo(p, "cseat", "cseat.help", "PS3_COCKPIT_SEAT", CockpitChoices(new[] { -30, -20, -10, -5, 5, 10, 20, 30 }, "cseat.fwd", "cseat.back"), y);
             y = AddCombo(p, "cheight", null, "PS3_COCKPIT_HEIGHT", CockpitChoices(new[] { -10, -5, 5, 10 }, "cheight.up", "cheight.down"), y);
             y = AddCombo(p, "lang", "lang.help", "PS3_LANG", LangChoices(), y + 8);

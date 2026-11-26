@@ -20,6 +20,17 @@
 // class is found by its C++ type name in the executable and the field by the code that reads it, so
 // every release that has both works the same way; one that doesn't is logged and left alone. The
 // chase, bumper and roof views and the menus don't use either.
+//
+// PS3_OUTSIDE_FOV     degrees added to the field of view of the other views Select picks (bumper, roof,
+//                     chase): the same, for the views from outside the cockpit. Unset = nothing touched.
+// Those views come from the same CameraOnboard: it keeps one camera state per mount (16 of 0x330 bytes),
+// and once a tick its update (a virtual function, found by the code that copies the chosen state) copies
+// the chosen view's state to where the race camera reads it, plus a second copy the change between
+// views works from. Each state names its mount (+0x300), and the game's table of mounts says which kind
+// each is: kind 1 is in-car, whose field of view is the cockpit's (above). Here that update is wrapped:
+// after it, a copy whose mount is any other kind gets the extra degrees on its field of view (+0x70,
+// degrees top to bottom). The game builds the copies again every tick, so nothing adds up. The replay's
+// TV cameras, the menus' cameras and the free camera are other cameras and never pass through here.
 #include <math.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -267,6 +278,227 @@ void cockpit_refresh()
 
 void cockpit_setting_changed(const char*, const char*, const char*, void*) { cockpit_refresh(); }
 
+// ---- The outside views (PS3_OUTSIDE_FOV) --------------------------------------------------------------
+
+// A camera state (0x330 bytes):
+const uint32_t kStateFovy = 0x70;       // its field of view, degrees top to bottom
+const uint32_t kStateMount = 0x300;     // its mount (the game's table below)
+const int kMounts = 16;
+const int kKindInCar = 1;
+
+float s_out_extra;         // degrees
+uint32_t s_ob_opd;         // CameraOnboard's update: its function descriptor, 0 = not found
+uint32_t s_ob_code;
+void (*s_ob_update)(ppu_context*);
+uint32_t s_ob_active;      // CameraOnboard: the chosen view's index (only logged)
+uint32_t s_ob_out[2];      // CameraOnboard: the two copies of the chosen view's state
+bool s_ob_wrapped;
+bool s_ob_probe;           // GT5_OUTFOV_PROBE=1: wrapped from the start, and every change of view logged
+int32_t s_mount_id[kMounts], s_mount_kind[kMounts];
+
+// The kind of a mount by the game's table, or -1 when it isn't there.
+int mount_kind(int32_t mount)
+{
+    if (mount < 0) return -1;
+    for (int i = 0; i < kMounts; i++)
+        if (s_mount_id[i] == mount) return s_mount_kind[i];
+    return -1;
+}
+
+// The game's table of camera mounts, {mount, kind} x 16, starting {0,0} {26,1} {1,3} {6,5} in every
+// release looked at (Europe 1.00, 2.11 and 2.17, Asia 1.00 and 2.01). False when it isn't found once.
+bool find_mount_table()
+{
+    static const uint32_t kStart[] = {0, 0, 26, 1, 1, 3, 6, 5};
+    uint32_t found = 0;
+    for (uint32_t ea = find_word(26, kImageLo + 8); ea; ea = find_word(26, ea + 4)) {
+        int i = 0;
+        while (i < 8 && rd32(ea - 8 + 4 * i) == kStart[i]) i++;
+        if (i < 8) continue;
+        if (found) return false;   // twice: don't guess
+        found = ea - 8;
+    }
+    if (!found) return false;
+    for (int i = 0; i < kMounts; i++) {
+        s_mount_id[i] = (int32_t)rd32(found + 8 * i);
+        s_mount_kind[i] = (int32_t)rd32(found + 8 * i + 4);
+    }
+    return true;
+}
+
+// Is this CameraOnboard's per-tick update? It copies the chosen state twice (memcpy, r5 = 0x330); next
+// to the first: lwz r4,ACTIVE(rX); mulli r4,r4,0x330; addi r4,r4,STATES; addi r0,rY,OUT; and an
+// addi rX,rY,OUT2 just before the second.
+bool parse_onboard_update(uint32_t code)
+{
+    if (code < kImageLo || code + 0x600 >= kImageHi || (code & 3)) return false;
+    bool frame = false;
+    for (uint32_t k = 0; k < 4; k++)
+        if ((rd32(code + 4 * k) & 0xFFFF0000u) == 0xF8210000u) frame = true;   // stdu r1,-N(r1)
+    if (!frame) return false;
+    const uint32_t n = 0x600 / 4;
+    uint32_t li5[2], nli = 0;
+    for (uint32_t k = 0; k < n && nli < 2; k++)
+        if (rd32(code + 4 * k) == 0x38A00330u) li5[nli++] = k;              // li r5,0x330
+    if (nli < 2) return false;
+    int64_t act = -1, states = -1, out = -1, out2 = -1;
+    bool mul = false;
+    for (uint32_t j = li5[0] >= 4 ? li5[0] - 4 : 0; j < li5[0] + 6 && j < n; j++) {
+        const uint32_t w = rd32(code + 4 * j);
+        if ((w & 0xFFE00000u) == 0x80800000u && act < 0) act = w & 0xFFFF;              // lwz r4,D(rX)
+        if ((w & 0xFFFF0000u) == 0x38840000u) states = w & 0xFFFF;                      // addi r4,r4,S
+        if ((w & 0xFFE00000u) == 0x38000000u && ((w >> 16) & 31)) out = w & 0xFFFF;      // addi r0,rY,O
+        if (w == 0x1C840330u) mul = true;                                               // mulli r4,r4,0x330
+    }
+    for (uint32_t j = li5[1] >= 6 ? li5[1] - 6 : 0; j < li5[1]; j++) {
+        const uint32_t w = rd32(code + 4 * j);
+        if ((w >> 26) == 14 && ((w >> 16) & 31) && (w & 0xFFFF) >= 0x1000 && !(w & 0x8000))
+            out2 = w & 0xFFFF;                                                          // addi rX,rY,O2
+    }
+    if (!mul || act < 0 || states < 0 || out < 0 || out2 < 0) return false;
+    s_ob_active = (uint32_t)act;
+    s_ob_out[0] = (uint32_t)out;
+    s_ob_out[1] = (uint32_t)out2;
+    return true;
+}
+
+// CameraOnboard's vtable entry for the update: the function descriptor's guest address, or 0.
+uint32_t find_onboard_update_opd()
+{
+    static const char kName[] = "N8GTCamera13CameraOnboardE";
+    const unsigned char* lo = vm_base + kImageLo;
+    const unsigned char* hi = vm_base + kImageHi;
+    uint32_t found = 0;
+    for (const unsigned char* p = lo; p + sizeof kName <= hi; p++) {
+        p = (const unsigned char*)memchr(p, 'N', (size_t)(hi - p));
+        if (!p || p + sizeof kName > hi) break;
+        if (memcmp(p, kName, sizeof kName) != 0 || p[-1] != 0) continue;
+        const uint32_t name_ea = (uint32_t)(p - vm_base);
+        for (uint32_t h = find_word(name_ea, kImageLo); h; h = find_word(name_ea, h + 4)) {
+            const uint32_t ti = h - 4;
+            if (!rd32(ti)) continue;
+            for (uint32_t v = find_word(ti, kImageLo); v; v = find_word(ti, v + 4)) {
+                const uint32_t vt = v - 4;
+                if (rd32(vt) != 0) continue;
+                for (int i = 0; i < 48; i++) {
+                    const uint32_t opd = rd32(vt + 8 + 4 * i);
+                    if (opd < kImageLo || opd >= kImageHi || (opd & 3)) break;
+                    const uint32_t code = rd32(opd);
+                    if (code < kImageLo || code >= kImageHi || (code & 3)) break;
+                    if (!parse_onboard_update(code)) continue;
+                    if (found && found != opd) return 0;   // two of them: don't guess
+                    found = opd;
+                }
+            }
+        }
+    }
+    if (found) parse_onboard_update(rd32(found));   // its offsets again (a later candidate may have set them)
+    return found;
+}
+
+// One copy of the chosen view's state: an outside view gets the extra degrees. A copy the game didn't
+// build again since the last tick (it still holds what was written here) is left as it is.
+void outside_fix(uint32_t st, float extra)
+{
+    static struct { uint32_t st; float written; } s_last[8];
+    static int s_next;
+    int e = -1;
+    for (int i = 0; i < 8; i++) if (s_last[i].st == st) e = i;
+    if (e < 0) { e = s_next; s_next = (s_next + 1) & 7; s_last[e].st = st; s_last[e].written = 0.0f; }
+    const float now = rdf(st + kStateFovy);
+    if (s_last[e].written != 0.0f && now == s_last[e].written) return;
+    s_last[e].written = 0.0f;
+    if (extra == 0.0f) return;
+    const int kind = mount_kind((int32_t)rd32(st + kStateMount));
+    if (kind < 0 || kind == kKindInCar) return;
+    if (!(now > 1.0f && now < 179.0f)) return;
+    const float v = fminf(fmaxf(now + extra, 10.0f), 140.0f);
+    wrf(st + kStateFovy, v);
+    s_last[e].written = v;
+}
+
+// GT5_OUTFOV_PROBE: a line each time a CameraOnboard's chosen view changes (at most 200).
+void outside_probe(uint32_t self)
+{
+    static struct { uint32_t self; int32_t key; } s_seen[8];
+    static int s_lines;
+    if (s_lines >= 200) return;
+    const uint32_t a = self + s_ob_out[0], b = self + s_ob_out[1];
+    const int32_t idx = (int32_t)rd32(self + s_ob_active);
+    const int32_t ma = (int32_t)rd32(a + kStateMount), mb = (int32_t)rd32(b + kStateMount);
+    const int32_t key = (idx & 0xFF) | ((ma & 0xFF) << 8) | ((mb & 0xFF) << 16);
+    int e = -1, free_e = -1;
+    for (int i = 0; i < 8; i++) {
+        if (s_seen[i].self == self) e = i;
+        if (!s_seen[i].self && free_e < 0) free_e = i;
+    }
+    if (e >= 0 && s_seen[e].key == key) return;
+    if (e < 0) { if (free_e < 0) return; e = free_e; s_seen[e].self = self; }
+    s_seen[e].key = key;
+    s_lines++;
+    fprintf(stderr, "[outfov-probe] onboard 0x%08X view %d: out mount %d kind %d fov %.2f | out2 mount %d kind %d fov %.2f\n",
+            self, idx, ma, mount_kind(ma), rdf(a + kStateFovy), mb, mount_kind(mb), rdf(b + kStateFovy));
+}
+
+void onboard_update(ppu_context* ctx)
+{
+    const uint32_t self = (uint32_t)ctx->gpr[3];   // the CameraOnboard
+    s_ob_update(ctx);
+    while (g_trampoline_fn) {
+        void (*tf)(void*) = g_trampoline_fn;
+        g_trampoline_fn = nullptr;
+        tf(ctx);
+    }
+    if (!self) return;
+    const float extra = s_out_extra;   // the menu can change it on another thread
+    outside_fix(self + s_ob_out[0], extra);
+    outside_fix(self + s_ob_out[1], extra);
+    if (s_ob_probe) outside_probe(self);
+}
+
+// Reads PS3_OUTSIDE_FOV and, the first time it is set, points the descriptor at the wrapper (which then
+// stays; at zero it only runs the game's update).
+void outside_refresh()
+{
+    const float fov = setting_number("PS3_OUTSIDE_FOV", -30.0f, 60.0f);
+    static bool said_none;
+    if (fov == 0.0f && !s_ob_wrapped && !s_ob_probe) return;   // the game as it is
+    if (!s_ob_opd || !s_ob_update) {
+        if (!said_none) {
+            said_none = true;
+            fprintf(stderr, "[cockpit] the race camera's update %s: PS3_OUTSIDE_FOV ignored\n",
+                    !s_ob_opd ? "isn't found in this executable" : "isn't in the lifted code");
+        }
+        return;
+    }
+    const bool changed = fov != s_out_extra;
+    s_out_extra = fov;
+    if (!s_ob_wrapped) {
+        wr32(s_ob_opd, s_ob_opd);
+        s_ob_wrapped = true;
+    }
+    if (changed)
+        fprintf(stderr, "[cockpit] outside views: field of view %+.0f degrees (race camera 0x%08X)\n", s_out_extra, s_ob_code);
+}
+
+void outside_setting_changed(const char*, const char*, const char*, void*) { outside_refresh(); }
+
+void outside_find()
+{
+    const char* probe = getenv("GT5_OUTFOV_PROBE");
+    s_ob_probe = probe && probe[0] == '1';
+    const uint32_t opd = find_onboard_update_opd();
+    if (!opd || !find_mount_table()) return;
+    s_ob_code = rd32(opd);
+    for (uint64_t i = 0; i < function_table_count; i++)
+        if (function_table[i].addr == s_ob_code) s_ob_update = function_table[i].func;
+    s_ob_opd = opd;
+    if (s_ob_update) ppu_register_function(opd, onboard_update);
+    if (s_ob_probe)
+        fprintf(stderr, "[outfov-probe] update 0x%08X (descriptor 0x%08X): view +0x%X, copies +0x%X +0x%X\n",
+                s_ob_code, opd, s_ob_active, s_ob_out[0], s_ob_out[1]);
+}
+
 void gt5_cockpit_apply()
 {
     // Found once, when the game is loaded; the wrapper is registered under the descriptor's address
@@ -284,8 +516,15 @@ void gt5_cockpit_apply()
     gt5_settings_on_change("PS3_COCKPIT_FOV", cockpit_setting_changed, nullptr);
     gt5_settings_on_change("PS3_COCKPIT_SEAT", cockpit_setting_changed, nullptr);
     gt5_settings_on_change("PS3_COCKPIT_HEIGHT", cockpit_setting_changed, nullptr);
+
+    outside_find();
+    outside_refresh();
+    gt5_settings_on_change("PS3_OUTSIDE_FOV", outside_setting_changed, nullptr);
 }
 
 const int s_registered = (ps3_on_loaded(gt5_cockpit_apply), 0);
 
 }  // namespace
+
+// For the in-game menu: whether the outside views' field of view can be changed in this executable.
+extern "C" int gt5_outside_fov_found(void) { return s_ob_opd && s_ob_update ? 1 : 0; }
