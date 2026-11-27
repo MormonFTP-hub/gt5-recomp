@@ -151,6 +151,24 @@ if(WIN32 AND EXISTS "${GT5_IMGUI_DIR}/imgui.cpp" AND EXISTS "${CMAKE_CURRENT_SOU
     target_link_libraries(gt5 PRIVATE d3dcompiler shell32)
 endif()
 
+# SMAA 1x (third_party/smaa, MIT, unmodified), the game's own anti-aliasing (LD_AA=smaa) on the D3D12 renderer:
+# src/aa/gt5_smaa.cpp, the third back end behind the renderer's upscaler interface (gt5_upscale.h). The runtime
+# calls gt5_smaa_get(); a build without this file links the runtime's stand-in (libs/video/rsx_smaa_none.c).
+# SMAA.hlsl goes into the executable as bytes (gen_smaa/smaa_hlsl.h, rewritten only when it changes).
+set(GT5_SMAA_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/smaa")
+if(WIN32 AND EXISTS "${GT5_SMAA_DIR}/SMAA.hlsl" AND EXISTS "${GT5_SMAA_DIR}/AreaTex.h" AND EXISTS "${GT5_SMAA_DIR}/SearchTex.h")
+    file(READ "${GT5_SMAA_DIR}/SMAA.hlsl" _smaa_hex HEX)
+    string(REGEX REPLACE "([0-9a-f][0-9a-f])" "0x\\1," _smaa_bytes "${_smaa_hex}")
+    file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/gen_smaa/smaa_hlsl.h.new"
+        "/* SMAA.hlsl (third_party/smaa), written by GT5/CMakeLists.txt */\nstatic const unsigned char k_smaa_hlsl[] = {${_smaa_bytes}0x00};\n")
+    configure_file("${CMAKE_CURRENT_BINARY_DIR}/gen_smaa/smaa_hlsl.h.new" "${CMAKE_CURRENT_BINARY_DIR}/gen_smaa/smaa_hlsl.h" COPYONLY)
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${GT5_SMAA_DIR}/SMAA.hlsl")
+    target_sources(gt5 PRIVATE src/aa/gt5_smaa.cpp)
+    set_source_files_properties(src/aa/gt5_smaa.cpp PROPERTIES
+        INCLUDE_DIRECTORIES "${GT5_SMAA_DIR};${CMAKE_CURRENT_BINARY_DIR}/gen_smaa;${PS3RECOMP_DIR}/libs/video")
+    message(STATUS "Anti-aliasing:   SMAA built in (DirectX 12)")
+endif()
+
 # Game-code mods (scripts/mods.py, MODDING.md): the start-up switch of each mod that applies to
 # this EBOOT. The file only exists when one does.
 file(GLOB GT5_MOD_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/src/gen/mods.cpp")

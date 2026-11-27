@@ -95,7 +95,7 @@ Rather do it by hand? See [Setup](#setup). On Linux? See [Linux](#linux).
 **Gran Turismo 5 (PC)** on your desktop (or `GT5Launcher.exe` in your `gt5-recomp` folder) opens the
 launcher: every setting in one window, then **Play**. No more editing `play.bat`.
 
-- **Display:** the renderer, resolution, anti-aliasing (AMD FSR on any card, NVIDIA DLSS on an RTX card), shadows, frame
+- **Display:** the renderer, resolution, anti-aliasing (the game's own SMAA and AMD FSR on any card, NVIDIA DLSS on an RTX card), shadows, frame
   generation, **borderless full screen** (the default), a maximized window or a window size, screen shape
   (ultrawide), the frame rate (60 or 30 fps) and [asynchronous shader loading](#shaders). The rows say
   what the game's own menu says; a row that
@@ -1287,6 +1287,11 @@ your way around. [CONTRIBUTING.md](CONTRIBUTING.md) has the few rules.
   state in the `[HANG]` report (after its stall dump), hashing textures the game keeps in full so changed
   ones aren't missed (after its finding), and the size of the help bars' button pictures used by Button
   symbols. Each place says so in its source.
+- [SMAA](https://github.com/iryoku/smaa) by Jorge Jimenez, Jose I. Echevarria, Belen Masia, Fernando Navarro
+  and Diego Gutierrez, MIT licensed, unmodified in `GT5/third_party/smaa` with its licence: the **SMAA**
+  anti-aliasing.
+- [Dear ImGui](https://github.com/ocornut/imgui) by Omar Cornut, MIT licensed, unmodified in
+  `GT5/third_party/imgui` with its licence: the in-game menu.
 - RPCS3, envytools and Mesa's nv30 driver were consulted as references for hardware behaviour.
 
 <a id="license"></a>

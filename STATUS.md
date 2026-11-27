@@ -134,6 +134,7 @@ performance matters more than the graphics card.
 
 The last few days; the full history since 1 November is in [CHANGELOG.md](CHANGELOG.md).
 
+- **27 Nov 2026 (night):** **SMAA anti-aliasing** built into the game, on any graphics card with DirectX 12: no add-on, no blur in motion, 0.16 ms at 2304x1296 on the tested rig (v0.1.123; tried on an NVIDIA card only).
 - **27 Nov 2026 (evening):** with *Throttle and brake* on, GT5's menus keep the PS3 pad's buttons (the triggers no longer press ✕ / □ there); the layout follows the race view (v0.1.122).
 - **27 Nov 2026 (later):** **AMD FSR anti-aliasing** on any graphics card with DirectX 12: *FSR: Native AA* and the Quality / Balanced / Performance upscaling modes, next to DLSS (v0.1.121; tried on an NVIDIA card only).
 - **27 Nov 2026:** *Throttle and brake* on the triggers works on the 2.xx game updates too (they number pads one higher than 1.00; the port now reads the numbers from the game) (v0.1.120; #60).

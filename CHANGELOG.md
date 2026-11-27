@@ -9,6 +9,13 @@ release on the tested rig in [STATUS.md](STATUS.md) unless a day says otherwise.
 
 ## 27 Nov 2026
 
+🏷️ Released as **v0.1.123**
+
+✨ **SMAA anti-aliasing, built into the game, on any graphics card** (asked for by Arpadiam)
+- **Anti-aliasing** (in-game menu F1 > Display, and the launcher's Display page) now has **SMAA**: it smooths the stair steps on edges (the horizon against the sky, poles, wires, barriers) without the softness DLSS and FSR bring in motion. It looks at each frame on its own, with no camera jitter, no frame history and no motion vectors, so nothing smears when the car moves.
+- No add-on and no download: it is the reference SMAA by Jorge Jimenez and colleagues (MIT licence, unmodified in `GT5/third_party/smaa`), preset High, run as three compute passes on the 3D picture before the game's own exposure, bloom and HUD, so the HUD stays sharp. It works on AMD, NVIDIA and Intel cards with DirectX 12; with Vulkan it stays greyed. The shaders are compiled the first time it is used (under 0.1 s here) and kept in `logs\smaa_shaders.bin`.
+- Checked here on an NVIDIA card (European disc, High Speed Ring): before-and-after pictures of the same race frame show the stair steps gone on the edges and the textures untouched (SMAA changed 0.7 % of the pixels); it took 0.16 ms of the graphics card at 2304x1296. Not tried on an AMD or Intel card.
+
 🏷️ Released as **v0.1.122**
 
 🎮 **Throttle and brake on the triggers stays in races: GT5's menus get the PS3 pad's buttons again**

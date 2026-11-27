@@ -320,6 +320,7 @@ namespace Gt5Launcher
             { "res", new[] { "Resolution", "分辨率" } },
             { "aa", new[] { "Anti-aliasing", "抗锯齿" } },
             { "aa.off", new[] { "Off", "关" } },
+            { "aa.smaa", new[] { "SMAA", "SMAA" } },
             { "aa.dlaa", new[] { "DLAA", "DLAA" } },
             { "aa.q", new[] { "DLSS: Quality", "DLSS：质量" } },
             { "aa.b", new[] { "DLSS: Balanced", "DLSS：平衡" } },
@@ -3373,12 +3374,12 @@ namespace Gt5Launcher
             // The rows in the game's order (its Display page, then its Performance page's Frame rate). One Resolution:
             // the game is always told 1080p (its mode with the sharp HUD) and the renderer scales from there.
             y = AddCombo(p, "res", null, "LD_RES_TARGET", new[] { new Choice("720", "720p"), new Choice("", "1080p"), new Choice("1440", "1440p"), new Choice("2160", "4K"), new Choice("2880", "5K") }, y);
-            // Anti-aliasing: NVIDIA DLSS on a PC with an NVIDIA RTX card, AMD FSR on any (both DirectX 12). It never
-            // asks: without its add-on a mode is greyed; the row under it adds DLSS, the Generator row's adds FSR.
-            // (The game's other entries can't be picked anywhere yet.)
+            // Anti-aliasing: the game's own SMAA on any PC, NVIDIA DLSS on a PC with an NVIDIA RTX card, AMD FSR on any
+            // (all DirectX 12). It never asks: without its add-on a mode is greyed; the row under it adds DLSS, the
+            // Generator row's adds FSR. (The game's FXAA and MSAA entries can't be picked anywhere yet.)
             var dlss = addons.Find(delegate (Addon a) { return a.Id == "dlss"; });
             var fsr = addons.Find(delegate (Addon a) { return a.Id == "fsr"; });
-            var aas = new List<Choice> { new Choice("", T.Get("aa.off")) };
+            var aas = new List<Choice> { new Choice("", T.Get("aa.off")), new Choice("smaa", T.Get("aa.smaa")) };
             if (dlss != null)
             {
                 aas.Add(new Choice("dlss_q", T.Get("aa.q")) { Needs = dlss }); aas.Add(new Choice("dlss_b", T.Get("aa.b")) { Needs = dlss });
