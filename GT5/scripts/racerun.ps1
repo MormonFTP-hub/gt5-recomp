@@ -31,6 +31,8 @@ if ($shape -match '^([\d.]+)[xX:]([\d.]+)$') {
     $widen = ([double]$Matches[1] / [double]$Matches[2]) / (16.0 / 9.0)
     if ($widen -gt 1.005) { $extra = "$extra --widen $($widen.ToString([cultureinfo]::InvariantCulture))" }
 }
+# The driver stops the build under test at the end: it needs to know which one (GT5_TEST_EXE).
+if ($e["GT5_TEST_EXE"]) { $env:GT5_TEST_EXE = $e["GT5_TEST_EXE"] }
 $drive = Start-Process python -WindowStyle Hidden -PassThru -ArgumentList "`"$s\screendrive.py`" --dir `"$frames`" --pad `"$env:LOCALAPPDATA\Temp\gt5_pad.txt`" --race --log `"$root\logs\$Tag.drive`" --prof `"$root\logs\prof_$Tag`" --end-after $EndAfter --timeout $Seconds --skip-movie $SkipMovie $extra"
 & "$s\run.ps1" -Seconds $Seconds -Tag $Tag -Env $e
 if (-not $drive.HasExited) { Stop-Process -Id $drive.Id -Force -Confirm:$false }

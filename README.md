@@ -705,6 +705,15 @@ drawn, its shaders are built for your graphics card, and the picture used to pau
   moment in the first race. **Off** waits for each new shader, as before. Vulkan always builds new
   shaders in the background, so it has no such row.
 
+<a id="player-name"></a>
+
+**Q: The game calls me "User". Can I change my name?**
+
+**A: Yes: the [launcher](#launcher)'s Game page, Player name (since v0.1.119).** On a PS3 the name comes
+from the console's user account; the port has one user, named User unless you give it a name. Up to 16
+characters, accents and other alphabets included, used from the next start of the game. It changes what
+GT Life and the race screens show, not your save. In `settings.bat` it is `set "PS3_USER_NAME=Jess"`.
+
 <a id="saves"></a>
 
 **Q: Where are my saves? Can I bring a save over from RPCS3?**
@@ -1192,6 +1201,7 @@ so the launcher's settings win. Some useful ones:
 | `PS3_MOUSE_STEER=1` | Steer with the mouse in races (left button throttle, right brake). Its other settings are under [Mouse steering](#mouse-steering). |
 | `PS3_COCKPIT_FOV=20` | The cockpit view 20° wider (negative: narrower); `PS3_COCKPIT_SEAT` and `PS3_COCKPIT_HEIGHT` move the eye (cm forward, cm up). See [Cockpit view](#cockpit-view). |
 | `PS3_OUTSIDE_FOV=20` | The bumper, roof and chase views 20° wider (negative: narrower). See [Cockpit view](#cockpit-view). |
+| `PS3_USER_NAME=Jess` | The player's name in GT Life and races, up to 16 characters, instead of "User". See [Player name](#player-name). |
 | `LD_VX_RUN=0` | Vertices are converted the way they were before 25 Nov (slower, same result); `2` converts both ways and counts differences in the `[vertex-run]` log line. |
 | `LD_REC_BATCH=0` | Calls reach the recording thread one at a time again, as before 25 Nov. |
 | `LD_VX_ASYNC=1` | A helper thread converts small draws' vertices while the drawing thread goes on. Off by default: it keeps one more core busy for a small gain. |

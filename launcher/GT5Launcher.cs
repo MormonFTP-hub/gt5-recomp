@@ -366,6 +366,9 @@ namespace Gt5Launcher
             { "speed", new[] { "Frame rate", "帧率" } },
             { "intro", new[] { "Skip the opening movie", "跳过开场动画" } },
             { "intro.help", new[] { "", "" } },
+            { "uname", new[] { "Player name", "玩家名称" } },
+            { "uname.help", new[] { "The name the game shows on GT Life and beside the other drivers in a race, up to 16 characters. Empty: User. Used from the next start of the game.",
+                                    "游戏在 GT Life 和比赛中与其他车手并列显示的名字，最多 16 个字符。留空为 User。下次启动游戏时生效。" } },
             { "speed.full", new[] { "60 fps", "60 fps" } },
             { "speed.30", new[] { "30 fps", "30 fps" } },
             { "framegen", new[] { "Frame generation", "帧生成" } },
@@ -713,7 +716,7 @@ namespace Gt5Launcher
             new[] { "PS3_MOUSE_STEER", "" }, new[] { "PS3_MOUSE_STEER_SENS", "" }, new[] { "PS3_MOUSE_STEER_CENTER", "" },
             new[] { "PS3_KEYS", "" },
             new[] { "PS3_COCKPIT_FOV", "" }, new[] { "PS3_COCKPIT_SEAT", "" }, new[] { "PS3_COCKPIT_HEIGHT", "" },
-            new[] { "PS3_OUTSIDE_FOV", "" },
+            new[] { "PS3_OUTSIDE_FOV", "" }, new[] { "PS3_USER_NAME", "" },
         };
         // True when there was no settings.bat yet: the launcher's first start on this install.
         public bool Fresh;
@@ -3165,6 +3168,33 @@ namespace Gt5Launcher
             RowControls(key, p, c0, y0, y);
             return y;
         }
+        // A line of text, saved as typed (without quotes, which settings.bat can't hold, or control characters).
+        int AddText(Panel p, string labelKey, string helpKey, string key, int maxChars, int y)
+        {
+            int c0 = p.Controls.Count, y0 = y;
+            p.Controls.Add(new Label { Text = T.Get(labelKey), AutoSize = true, Location = new Point(0, y + 4), ForeColor = Look.Text });
+            var t = new TextBox { MaxLength = maxChars, BackColor = Look.Panel, ForeColor = Look.Text, BorderStyle = BorderStyle.FixedSingle,
+                                  Location = new Point(250, y), Width = 300, Text = S.Get(key) };
+            Func<string, string> clean = delegate(string v)
+            {
+                var sb = new StringBuilder();
+                foreach (char ch in v) if (ch != '"' && !char.IsControl(ch)) sb.Append(ch);
+                return sb.ToString().Trim();
+            };
+            t.TextChanged += delegate
+            {
+                if (comboQuiet) return;
+                string v = clean(t.Text);
+                if (v == S.Get(key)) return;
+                S.Set(key, v); SaveQuiet();
+            };
+            refreshers.Add(delegate { if (!t.Focused && clean(t.Text) != S.Get(key)) { comboQuiet = true; try { t.Text = S.Get(key); } finally { comboQuiet = false; } } });
+            p.Controls.Add(t);
+            y += 34;
+            y = helpKey != null ? AddHelp(p, T.Get(helpKey), y - 2, 250) : y + 6;
+            RowControls(key, p, c0, y0, y);
+            return y;
+        }
         int AddCheck(Panel p, string labelKey, string helpKey, string key, string onValue, int y)
         {
             int c0 = p.Controls.Count, y0 = y;
@@ -3556,6 +3586,8 @@ namespace Gt5Launcher
             y = AddCombo(p, "cheight", null, "PS3_COCKPIT_HEIGHT", CockpitChoices(new[] { -10, -5, 5, 10 }, "cheight.up", "cheight.down"), y);
             y = AddCombo(p, "lang", "lang.help", "PS3_LANG", LangChoices(), y + 8);
             y = AddCheck(p, "intro", "intro.help", "PS3_SKIP_INTRO", "1", y + 4);
+            // The player's name (PS3_USER_NAME, ps3recomp libs\system\cellUserInfo.c): "" = the game's "User".
+            y = AddText(p, "uname", "uname.help", "PS3_USER_NAME", 16, y + 4);
             // Sound, as on the game's Sound page (cellAudio.c): the volume of what reaches the speakers, 0-100 % in steps
             // of 5 (100 = nothing written), and quiet while another window is in front.
             y = AddHeading(p, T.Get("sound"), y + 10);

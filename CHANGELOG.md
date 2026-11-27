@@ -9,6 +9,17 @@ release on the tested rig in [STATUS.md](STATUS.md) unless a day says otherwise.
 
 ## 26 Nov 2026
 
+🏷️ Released as **v0.1.119**
+
+🔢 **Cockpit screens show their numbers again, not white boxes** (thanks Arpadiam)
+- In some cockpits the digital displays drew a white box where each number should be (the gear in the Ferrari 599's rev counter and the Enzo's display in Arpadiam's pictures; the clock, odometer and range on the McLaren MP4-12C's screen here).
+- GT5 draws those numbers from small pictures in a format the DirectX 12 renderer had no case for (D8R8G8B8: colour with no transparency), so it fell back to plain white. They are now read like the usual colour pictures, with full opacity. Vulkan already read them.
+- Checked on the McLaren in an Arcade race (European disc): its screen shows 16:09, 2.8 km and 0 km, and the log has no more "decode failed" lines. The 599 and the Enzo aren't in the test save's Arcade list, so they weren't driven here.
+
+🪪 **Your own name instead of "User"** (thanks 6.2Destroyer)
+- The launcher's **Game** page has a **Player name** box: the name GT Life and the race screens show, up to 16 characters, accents and other alphabets included. Empty keeps "User". It is used from the next start of the game, and saves aren't touched.
+- On a PS3 the name comes from the console's user account; the port has one user. In `settings.bat` it is `set "PS3_USER_NAME=..."`, read by the game itself as UTF-8 so letters like é survive.
+
 🏷️ Released as **v0.1.118**
 
 🛞 **No clutch pedal? Braking hard no longer leaves a manual car in neutral** (thanks JohnnyGusta)

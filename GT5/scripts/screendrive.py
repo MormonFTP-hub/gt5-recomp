@@ -121,7 +121,8 @@ def unsqueeze(img, widen, content_w=0):
     return img.crop((round(cx - half), 0, round(cx + half), 720)).resize((1280, 720), Image.BILINEAR)
 
 
-TEST_EXE = os.path.join(os.path.dirname(HERE), "build", "gt5.exe")
+# GT5_TEST_EXE (racerun.ps1 -Env) names another build under test; stop that one, not the default.
+TEST_EXE = os.environ.get("GT5_TEST_EXE") or os.path.join(os.path.dirname(HERE), "build", "gt5.exe")
 
 
 def stop_test_game():
@@ -222,6 +223,17 @@ def drive(a):
                 press(a.pad, RIGHT, 16)
                 left_at = now
                 continue
+            # A Cross on the top menu that the game didn't take (its icons still animating) leaves it to fade
+            # into the attract scene, where no step matches. A press brings the menu back, and the step before
+            # ("back at top_arc") takes it from there. Up to three times, 30 s apart.
+            if (s[0] == "arcade" and d > s[5] and left_at and now - left_at >= 30 and now - tries.get("wake_at", 0) >= 30
+                    and tries.get("wake", 0) < 3):
+                tries["wake"] = tries.get("wake", 0) + 1
+                tries["wake_at"] = now
+                say("nothing matched 30 s after the top menu, press 0x%04X to wake it" % CROSS)
+                press(a.pad, CROSS, 16)
+                left_at = now
+                continue
             if d <= s[5] and a.stop_at == s[0]:
                 # --stop-at: arrived; press nothing more (the top menu then idles into its attract demo).
                 if not tries.get("stopped"):
@@ -259,6 +271,22 @@ def drive(a):
                                 shot.save(os.path.join(a.dir, "step_05_key%02d_%s.png" % (n, key)))
                         if a.explore:
                             say("explored the track list, stopping the game")
+                            stop_test_game()
+                            return
+                    if s[0] in ("car", "color") and a.car_keys and not tries.get("car_keys"):
+                        # Another car: the same as --track-keys, on the car list. The car list and the colour
+                        # swatches share a screen (the "color" crop matches both), so whichever matches first.
+                        tries["car_keys"] = 1
+                        for n, key in enumerate(a.car_keys.split(",")):
+                            say("car key %s" % key)
+                            if key != "wait":
+                                press(a.pad, MASK[key], 16)
+                            time.sleep(a.key_gap)
+                            shot = newest(a.dir)
+                            if shot is not None:
+                                shot.save(os.path.join(a.dir, "step_06_key%02d_%s.png" % (n, key)))
+                        if a.explore:
+                            say("explored the car list, stopping the game")
                             stop_test_game()
                             return
                     press(a.pad, s[3], s[4])
@@ -344,6 +372,7 @@ if __name__ == "__main__":
     p.add_argument("--capture-at", type=float, default=20, help="seconds into the race for --capture race")
     p.add_argument("--track-keys", default="", help="buttons pressed on the track list before Cross, e.g. up,right,down;"
                    " wait pauses. The first press only wakes the cursor. Tsukuba: wait,wait,up,wait,select,right,cross,wait,wait,select,right,right,right,right")
+    p.add_argument("--car-keys", default="", help="buttons pressed on the car list before Cross, like --track-keys")
     p.add_argument("--key-gap", type=float, default=2.5, help="seconds after each --track-keys press")
     p.add_argument("--explore", action="store_true", help="stop the game after the --track-keys presses")
     p.add_argument("--stop-at", default="", help="a step name (e.g. top_gt) to stop pressing at; top_gt then shows the attract demo")

@@ -4892,10 +4892,17 @@ index 93eba8cf..ffad7380 100644
      int slot = sysmodule_slot(id);
      if (slot < 0)
 diff --git a/libs/system/cellSysutil.c b/libs/system/cellSysutil.c
-index c4eb87db..ade1bbb4 100644
 --- a/libs/system/cellSysutil.c
 +++ b/libs/system/cellSysutil.c
-@@ -219,6 +219,7 @@ s32 cellSysutilCheckCallback(void)
+@@ -6,6 +6,7 @@
+  */
+ 
+ #include "cellSysutil.h"
++#include "cellUserInfo.h"   /* ps3_user_name: the player's name */
+ #include "ps3emu/guest_call.h"
+ #include <stdio.h>
+ #include <stdlib.h>
+@@ -219,6 +220,7 @@
       * its dismissal. Done before the drain so the callback it queues is
       * delivered on this same poll. */
      { extern void cellMsgDialog_tick(void); cellMsgDialog_tick(); }
@@ -4903,6 +4910,31 @@ index c4eb87db..ade1bbb4 100644
      /* Turn psnr replies and pushes into queued NP callbacks first, so this
       * same poll delivers them. A no-op when no psnr server is configured. */
      { extern void np_psnr_pump(void); np_psnr_pump(); }
+@@ -462,16 +464,15 @@
+         return CELL_SYSUTIL_ERROR_VALUE;
+ 
+     switch (id) {
+-    case CELL_SYSUTIL_SYSTEMPARAM_ID_NICKNAME: {
+-        const char* s = "ps3recomp_user";
++    case CELL_SYSUTIL_SYSTEMPARAM_ID_NICKNAME:
++    case CELL_SYSUTIL_SYSTEMPARAM_ID_CURRENT_USERNAME: {
++        /* The player's name (PS3_USER_NAME, cellUserInfo.c). The nickname stays "ps3recomp_user"
++         * while no name is set, as before. */
++        char name[64];
++        const char* s = name;
+         u32 i;
+-        for (i = 0; s[i] && i < bufsize - 1; i++) vm_write8(buf_ea + i, (uint8_t)s[i]);
+-        vm_write8(buf_ea + i, 0);
+-        break;
+-    }
+-    case CELL_SYSUTIL_SYSTEMPARAM_ID_CURRENT_USERNAME: {
+-        const char* s = "User";
+-        u32 i;
++        ps3_user_name(name, sizeof name);
++        if (id == CELL_SYSUTIL_SYSTEMPARAM_ID_NICKNAME && strcmp(name, "User") == 0) s = "ps3recomp_user";
+         for (i = 0; s[i] && i < bufsize - 1; i++) vm_write8(buf_ea + i, (uint8_t)s[i]);
+         vm_write8(buf_ea + i, 0);
+         break;
 diff --git a/libs/video/cellVideoOut.c b/libs/video/cellVideoOut.c
 index c67a6eaa..58dd9030 100644
 --- a/libs/video/cellVideoOut.c
@@ -60024,7 +60056,16 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
  
  #define SMP_DEFAULT      0
  #define SMP_CACHE_SLOTS  MAX_SAMPLERS
-@@ -195,6 +229,7 @@
+@@ -190,11 +224,16 @@
+ #define TEX_FMT_A4R4G4B4   0x83
+ #define TEX_FMT_R5G6B5     0x84
+ #define TEX_FMT_A8R8G8B8   0x85
++/* A8R8G8B8's bytes with no alpha channel: the first byte means nothing and reads as 1. GT5's cockpit
++ * screens draw their numbers from small textures of this format in main memory (16x16 tiles); with no
++ * case for it the decode failed, the draw got the white texture, and every digit was a white box. */
++#define TEX_FMT_D8R8G8B8   0x9E
+ #define TEX_FMT_DXT1       0x86
+ #define TEX_FMT_DXT23      0x87
  #define TEX_FMT_DXT45      0x88
  #define TEX_FMT_G8B8       0x8B
  #define TEX_FMT_DEPTH24_D8 0x90
@@ -60032,7 +60073,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
  #define TEX_FMT_LINEAR     0x20
  #define TEX_FMT_UNNORM     0x40
  #define TEX_FMT_BASE_MASK  0x9F
-@@ -207,8 +242,15 @@
+@@ -207,8 +246,15 @@
      ID3D12Resource* fb_tex;   /* feedback copy, see surface_feedback_srv */
      u32 pitch;                /* guest row pitch of colour target 0 (bytes), 0 = unknown */
      /* Top-left windows of the surface for smaller aliasing textures (see surface_window). */
@@ -60049,7 +60090,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
  #if !defined(YZ_PERF_CLEAN)
      u32 resource_serial;
      u32 last_write_generation;
-@@ -236,22 +278,56 @@
+@@ -236,22 +282,56 @@
      u32 w, h;
      u32 snapshot_w, snapshot_h;
      D3D12_RESOURCE_STATES snapshot_state;
@@ -60106,7 +60147,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
  } texcache_t;
  typedef struct {
      u32 location, offset, format, width, height, pitch;
-@@ -259,7 +335,7 @@
+@@ -259,7 +339,7 @@
      u64 content_hash;
      u32 last_hash_frame;
  } vtexcache_t;
@@ -60115,7 +60156,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
  typedef struct {
      u64 hash;
      u32 source_length;
-@@ -289,6 +365,9 @@
+@@ -289,6 +369,9 @@
      ID3D12Device*              dev;
      ID3D12CommandQueue*        queue;
      ID3D12CommandAllocator*    alloc;
@@ -60125,7 +60166,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
      ID3D12GraphicsCommandList* list;
      ID3D12Fence*               fence;
      HANDLE                     fence_event;
-@@ -314,6 +393,7 @@
+@@ -314,6 +397,7 @@
      ID3D12DescriptorHeap*      srv_heap;
      u32                        srv_step, srv_ring_used;
      ID3D12Resource*            white_tex;
@@ -60133,7 +60174,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
      texcache_t                 textures[MAX_TEXTURES];
      u32                        n_textures;
      vtexcache_t                vtex[MAX_VTEX];
-@@ -346,10 +426,14 @@
+@@ -346,10 +430,14 @@
      ID3D12RootSignature*       rootsig_x;
      ID3D12RootSignature*       depth_snapshot_rootsig;
      ID3D12PipelineState*       depth_snapshot_pso;
@@ -60148,7 +60189,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
      u32                        n_psos;
      shader_blob_cache_t        vs_blobs;
      shader_blob_cache_t        ps_blobs;
-@@ -376,6 +460,9 @@
+@@ -376,6 +464,9 @@
      u32                        ib_used;
  
      u32                        width, height;
@@ -60158,7 +60199,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
      rsx_live_guest_ptr_fn      guest_ptr;
      void*                      guest_user;
  
-@@ -396,6 +483,687 @@
+@@ -396,6 +487,687 @@
  
  static ld_state g;
  
@@ -60846,7 +60887,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
  #define LD_VERTEX_HOIST_FETCH       (1u << 0)
  #define LD_VERTEX_MASK_SIGNATURE    (1u << 1)
  #define LD_VERTEX_COMPACT_PAYLOAD   (1u << 2)
-@@ -439,6 +1207,11 @@
+@@ -439,6 +1211,11 @@
  static u32 g_ld_frames = 0;
  static ID3D12InfoQueue* g_ld_info_queue = NULL;
  static int g_ld_debug_layer_enabled = 0;
@@ -60858,7 +60899,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
  
  typedef struct {
      int valid;
-@@ -449,6 +1222,9 @@
+@@ -449,6 +1226,9 @@
      u32 cube_mask, vtex_mask, txl_mask;
      u32 input_mask, input_stride;
      u32 packed_offsets;
@@ -60868,7 +60909,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
  } ld_pso_metadata;
  
  static ld_pso_metadata g_ld_current_pso;
-@@ -720,7 +1496,7 @@
+@@ -720,7 +1500,7 @@
  static void ld_present_measure_dump(void)
  {
      if (g_ld_present_dumped || g_ld_present_total == 0 ||
@@ -60877,7 +60918,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
          return;
      g_ld_present_dumped = 1;
  
-@@ -1051,6 +1827,17 @@
+@@ -1051,6 +1831,17 @@
      LD_FLUSH_SHUTDOWN,
      LD_FLUSH_REASON_COUNT
  } ld_flush_reason;
@@ -60895,7 +60936,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
  
  #if defined(YZ_PERF_PROFILE)
  typedef enum {
-@@ -1239,7 +2026,191 @@
+@@ -1239,7 +2030,191 @@
      return g.guest_ptr(g.guest_user, location, offset, min_bytes);
  }
  static u64 fnv1a(const void* data, u32 n, u64 h);
@@ -61087,7 +61128,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
  static u64 live_legacy_pso_key(void);
  static void ld_vertex_diag_emit(const char* reason, int dump_surface);
  
-@@ -1374,7 +2345,59 @@
+@@ -1374,7 +2349,59 @@
      u32 stencil_enable, stencil_two_sided;
      u32 s_func, s_func_mask, s_write_mask, s_fail, s_zfail, s_zpass;
      u32 bs_func, bs_fail, bs_zfail, bs_zpass;
@@ -61147,7 +61188,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
  
  static void decode_render_state(render_state_t* rs)
  {
-@@ -1385,6 +2408,19 @@
+@@ -1385,6 +2412,19 @@
      rsx_dsp_surface alpha_surface;
      rsx_dsp_get_surface(&g.rsx, &alpha_surface);
      rs->alpha_ref_format = alpha_surface.color_format;
@@ -61167,7 +61208,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
      rs->rt_fp16 = alpha_surface.color_format == RSX_SURFACE_FMT_F_W16Z16Y16X16;
      rs->rt_count = ld_rt_count(alpha_surface.color_target);
      rs->blend_enable = rsx_dsp_reg(&g.rsx, M_BLEND_ENABLE) & 1;
-@@ -1421,6 +2457,14 @@
+@@ -1421,6 +2461,14 @@
      rs->bs_fail      = rsx_dsp_reg(&g.rsx, M_BACK_STENCIL_OP_FAIL);
      rs->bs_zfail     = rsx_dsp_reg(&g.rsx, M_BACK_STENCIL_OP_ZFAIL);
      rs->bs_zpass     = rsx_dsp_reg(&g.rsx, M_BACK_STENCIL_OP_ZPASS);
@@ -61182,7 +61223,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
  }
  
  /* GL stencil-op enums (the NV4097 payload) -> D3D12. Zero (never seeded by
-@@ -1472,6 +2516,9 @@
+@@ -1472,6 +2520,9 @@
      /* Y-negating viewport epilogue mirrors winding; take the front sense
       * straight from the guest value (validated in B1). */
      pd->RasterizerState.FrontCounterClockwise = (rs->front_face == 0x0901);
@@ -61192,7 +61233,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
      if (g.depth) {
          pd->DSVFormat = DXGI_FORMAT_D32_FLOAT_S8X24_UINT;
          pd->DepthStencilState.DepthEnable = rs->depth_test ? TRUE : FALSE;
-@@ -1516,6 +2563,42 @@
+@@ -1516,6 +2567,42 @@
      }
  }
  
@@ -61235,7 +61276,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
  static D3D12_SAMPLER_DESC decode_sampler(const rsx_dsp_texture* t)
  {
      D3D12_SAMPLER_DESC sd = {0};
-@@ -1532,12 +2615,31 @@
+@@ -1532,12 +2619,31 @@
      sd.AddressU = gcm_wrap(t->wrap);
      sd.AddressV = gcm_wrap(t->wrap >> 8);
      sd.AddressW = gcm_wrap(t->wrap >> 16);
@@ -61268,7 +61309,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
      return sd;
  }
  /* Cache key of a sampler: exactly the fields decode_sampler reads, so two states share a descriptor only when
-@@ -1553,12 +2655,44 @@
+@@ -1553,12 +2659,44 @@
      const u64 wrap_w  = (t->wrap >> 16) & 0xF;
      const u64 max_lod = (t->control0 >> 7) & 0xFFF;
      const u64 min_lod = (t->control0 >> 19) & 0xFFF;
@@ -61314,7 +61355,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
  static D3D12_CPU_DESCRIPTOR_HANDLE rtv_handle(u32 idx)
  {
      D3D12_CPU_DESCRIPTOR_HANDLE h;
-@@ -1566,12 +2700,21 @@
+@@ -1566,12 +2704,21 @@
      h.ptr += (size_t)idx * g.rtv_step;
      return h;
  }
@@ -61337,7 +61378,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
  }
  static void srv_write(u32 slot, ID3D12Resource* tex)
  {
-@@ -1611,23 +2754,127 @@
+@@ -1611,23 +2758,127 @@
      g.dev->lpVtbl->CreateUnorderedAccessView(
          g.dev, tex, NULL, &ud, srv_cpu(slot));
  }
@@ -61468,7 +61509,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
      D3D12_GPU_DESCRIPTOR_HANDLE h;
      g.srv_heap->lpVtbl->GetGPUDescriptorHandleForHeapStart(g.srv_heap, &h);
      h.ptr += (u64)base * g.srv_step;
-@@ -1637,19 +2884,22 @@
+@@ -1637,19 +2888,22 @@
      u32 zindex, D3D12_GPU_DESCRIPTOR_HANDLE* out_source,
      D3D12_GPU_DESCRIPTOR_HANDLE* out_destination)
  {
@@ -61494,7 +61535,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
          D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
  
      D3D12_GPU_DESCRIPTOR_HANDLE gpu;
-@@ -1668,28 +2918,90 @@
+@@ -1668,28 +2922,90 @@
      h.ptr += (size_t)slot * g.smp_step;
      return h;
  }
@@ -61592,7 +61633,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
      /* The caller preflights capacity before recording render-state commands,
       * because a command-list flush here would discard that state. */
      if (g.smp_ring_used >= SMP_RING_TABLES) {
-@@ -1697,6 +3009,7 @@
+@@ -1697,6 +3013,7 @@
          return invalid;
      }
      const u32 base = g.smp_ring_used++ * SMP_TABLE_SIZE;
@@ -61600,7 +61641,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
      memcpy(g.smp_ring_slots[base / SMP_TABLE_SIZE], slots,
             sizeof(g.smp_ring_slots[0]));
      D3D12_CPU_DESCRIPTOR_HANDLE dst;
-@@ -1718,8 +3031,1248 @@
+@@ -1718,8 +3035,1248 @@
  /* ---------------------------------------------------------------------------
   * command list submit/wait (simple synchronous model, like the harness)
   * -----------------------------------------------------------------------*/
@@ -62849,7 +62890,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
  #if defined(YZ_PERF_PROFILE)
      const LONGLONG flush_begin = ld_profile_qpc();
      g_ld_profile.total.flush_reason[reason]++;
-@@ -1727,7 +4280,12 @@
+@@ -1727,7 +4284,12 @@
  #else
      (void)reason;
  #endif
@@ -62863,7 +62904,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
      if (FAILED(close_hr)) {
          fprintf(stderr,
                  "[d3d-fail] command-list Close hr=0x%08lX frame=%u\n",
-@@ -1736,8 +4294,10 @@
+@@ -1736,8 +4298,10 @@
          g.ready = 0;
          return;
      }
@@ -62876,7 +62917,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
      const u64 v = ++g.fence_value;
      const HRESULT signal_hr =
          g.queue->lpVtbl->Signal(g.queue, g.fence, v);
-@@ -1749,13 +4309,15 @@
+@@ -1749,13 +4313,15 @@
          g.ready = 0;
          return;
      }
@@ -62894,7 +62935,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
          if (FAILED(event_hr)) {
              fprintf(stderr,
                      "[d3d-fail] fence SetEventOnCompletion "
-@@ -1765,13 +4327,64 @@
+@@ -1765,13 +4331,64 @@
              g.ready = 0;
              return;
          }
@@ -62960,7 +63001,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
      ld_drain_info_queue("flush");
      /* Dynamic guest textures can replace a cached D3D resource while an
       * earlier draw in this command list still references the old one.  The
-@@ -1780,9 +4393,15 @@
+@@ -1780,9 +4397,15 @@
      for (u32 i = 0; i < g.n_retired_textures; i++)
          g.retired_textures[i]->lpVtbl->Release(g.retired_textures[i]);
      g.n_retired_textures = 0;
@@ -62976,7 +63017,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
  #if defined(YZ_PERF_PROFILE)
      const u64 flush_ticks = (u64)(ld_profile_qpc() - flush_begin);
      g_ld_profile.total.flush_qpc += flush_ticks;
-@@ -1822,6 +4441,23 @@
+@@ -1822,6 +4445,23 @@
          if (lh) { idx |= (y & 1) << shift; y >>= 1; shift++; lh--; }
      }
      return idx;
@@ -63000,10 +63041,19 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
  }
  static u8 remap_comp(const u8 s[4], u32 remap, u32 comp)
  {
-@@ -1913,6 +4549,75 @@
+@@ -1903,6 +4543,7 @@
+         break;
+     }
+     case TEX_FMT_DEPTH24_D8: s[0] = 255; s[1] = s[2] = s[3] = p[0]; break;
++    case TEX_FMT_D8R8G8B8: s[0] = 255; s[1] = p[1]; s[2] = p[2]; s[3] = p[3]; break;
+     default: s[0] = p[0]; s[1] = p[1]; s[2] = p[2]; s[3] = p[3]; break;
+     }
+     d[0] = remap_comp(s, remap, 1);
+@@ -1912,6 +4553,75 @@
+ }
  
  typedef struct { u32 w, h; const u8* data; u32 row_bytes, rows; } tex_level_t;
- 
++
 +/* Room for one upload: the ring when it fits, or a buffer of its own. A scene load
 + * decodes far more than the ring holds in a frame, and running out used to end the
 + * texture's upload there: the mips left over stayed black, so GT5's track went black
@@ -63072,11 +63122,10 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
 +    tex_reuse_barrier(t, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_DEST);
 +    return t;
 +}
-+
+ 
  static ID3D12Resource* create_texture_mipped(DXGI_FORMAT fmt, const tex_level_t* lv, u32 n)
  {
-     if (n == 0) return NULL;
-@@ -1921,20 +4626,22 @@
+@@ -1921,20 +4631,22 @@
      rd.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
      rd.Width = lv[0].w; rd.Height = lv[0].h; rd.DepthOrArraySize = 1;
      rd.MipLevels = (u16)n; rd.Format = fmt; rd.SampleDesc.Count = 1;
@@ -63105,7 +63154,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
          src.PlacedFootprint.Offset = start;
          src.PlacedFootprint.Footprint.Format = fmt;
          src.PlacedFootprint.Footprint.Width = lv[m].w;
-@@ -1944,7 +4651,7 @@
+@@ -1944,7 +4656,7 @@
          dst.pResource = tex; dst.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
          dst.SubresourceIndex = m;
          g.list->lpVtbl->CopyTextureRegion(g.list, &dst, 0, 0, 0, &src, NULL);
@@ -63114,7 +63163,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
  #if defined(YZ_PERF_PROFILE)
          g_ld_profile.total.texture_upload_bytes +=
              (u64)pitch * lv[m].rows;
-@@ -1971,8 +4678,8 @@
+@@ -1971,8 +4683,8 @@
      rd.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
      rd.Width = lv[0].w; rd.Height = lv[0].h; rd.DepthOrArraySize = 6;
      rd.MipLevels = (u16)n_mips; rd.Format = fmt; rd.SampleDesc.Count = 1;
@@ -63125,7 +63174,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
              g.dev, &hp, D3D12_HEAP_FLAG_NONE, &rd,
              D3D12_RESOURCE_STATE_COPY_DEST, NULL,
              &IID_ID3D12Resource, (void**)&tex)))
-@@ -1981,17 +4688,22 @@
+@@ -1981,17 +4693,22 @@
          for (u32 mip = 0; mip < n_mips; mip++) {
              const tex_level_t* level = &lv[face * n_mips + mip];
              const u32 pitch = (level->row_bytes + 255) & ~255u;
@@ -63153,7 +63202,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
              src.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
              src.PlacedFootprint.Offset = start;
              src.PlacedFootprint.Footprint.Format = fmt;
-@@ -2004,7 +4716,7 @@
+@@ -2004,7 +4721,7 @@
              dst.SubresourceIndex = face * n_mips + mip;
              g.list->lpVtbl->CopyTextureRegion(
                  g.list, &dst, 0, 0, 0, &src, NULL);
@@ -63162,7 +63211,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
  #if defined(YZ_PERF_PROFILE)
              g_ld_profile.total.texture_upload_bytes +=
                  (u64)pitch * level->rows;
-@@ -2022,10 +4734,99 @@
+@@ -2022,10 +4739,99 @@
      return tex;
  }
  
@@ -63262,7 +63311,12 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
  }
  
  static u32 texture_source_span(const rsx_dsp_texture* t)
-@@ -2048,10 +4849,25 @@
+@@ -2044,14 +4850,30 @@
+     case TEX_FMT_G8B8: texel_size = 2; break;
+     case RSX_TEX_FMT_W16Z16Y16X16_FLOAT: texel_size = 8; break;
+     case TEX_FMT_A8R8G8B8:
++    case TEX_FMT_D8R8G8B8:
+     case TEX_FMT_DEPTH24_D8: texel_size = 4; break;
      default: return 0;
      }
      if (!t->width || !t->height || t->width > 4096 || t->height > 4096 ||
@@ -63289,7 +63343,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
      /* A pitch-linear (LN) texture cannot carry a mip chain -- the RSX samples
       * only its base level and ignores the mipmap count in SET_TEXTURE_FORMAT.
       * Honouring that count instead walks `off += pitch * mh` through whatever
-@@ -2077,6 +4893,8 @@
+@@ -2077,6 +4899,8 @@
      for (u32 m = 0; m < n_mips; m++) {
          if (block_size)
              span += ((mw + 3) / 4) * block_size * ((mh + 3) / 4);
@@ -63298,7 +63352,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
          else {
              const u32 pitch = (m == 0 && linear && t->pitch)
                  ? t->pitch : mw * texel_size;
-@@ -2086,10 +4904,20 @@
+@@ -2086,10 +4910,20 @@
          mw = mw > 1 ? mw >> 1 : 1;
          mh = mh > 1 ? mh >> 1 : 1;
      }
@@ -63319,7 +63373,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
  {
      const u32 span = texture_source_span(t);
      const u8* src = span ? guest_ptr(t->location, t->offset, span) : NULL;
-@@ -2125,20 +4953,397 @@
+@@ -2125,20 +4959,397 @@
  
      /* One hash per cached texture per presented frame.  Word-at-a-time FNV is
       * deliberately cheap; this is a mutation detector, not a content ID. */
@@ -63632,7 +63686,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
 +    case TEX_FMT_A1R5G5B5:
 +    case TEX_FMT_R5G6B5:
 +    case TEX_FMT_G8B8: texel_size = 2; break;
-+    case TEX_FMT_A8R8G8B8: texel_size = 4; break;
++    case TEX_FMT_A8R8G8B8: case TEX_FMT_D8R8G8B8: texel_size = 4; break;
 +    default: return NULL;
 +    }
 +    const u32 span = texture_source_span(t);
@@ -63730,7 +63784,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
  }
  
  static ID3D12Resource* decode_guest_texture(const rsx_dsp_texture* t, u32 remap)
-@@ -2146,8 +5351,19 @@
+@@ -2146,8 +5357,19 @@
      const u32 base_fmt = t->format & TEX_FMT_BASE_MASK & ~(u32)TEX_FMT_UNNORM;
      const int linear = (t->format & TEX_FMT_LINEAR) != 0;
      const u32 w = t->width, h = t->height;
@@ -63751,7 +63805,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
      u32 n_mips = t->mipmaps ? t->mipmaps : 1;
      if (n_mips > 14) n_mips = 14;
      /* A pitch-linear (LN) texture cannot carry a mip chain -- the RSX samples
-@@ -2172,6 +5388,18 @@
+@@ -2172,6 +5394,18 @@
          const u32 total = texture_source_span(t);
          const u8* src = guest_ptr(t->location, t->offset, total);
          if (!src) return NULL;
@@ -63770,7 +63824,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
          if (t->cubemap) {
              n_mips = 1;
              for (u32 d = (w < h ? w : h) / 4; d > 1; d >>= 1)
-@@ -2201,9 +5429,19 @@
+@@ -2201,9 +5435,19 @@
              return create_texture_cube(dxgi, cube_levels, n_mips);
          }
          tex_level_t levels[14];
@@ -63791,7 +63845,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
              levels[n].w = (mw + 3) & ~3u;
              levels[n].h = (mh + 3) & ~3u;
              levels[n].data = src + off;
-@@ -2215,7 +5453,14 @@
+@@ -2215,7 +5459,14 @@
              mw = mw > 1 ? mw >> 1 : 1;
              mh = mh > 1 ? mh >> 1 : 1;
          }
@@ -63807,7 +63861,15 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
      }
  
      u32 texel_size;
-@@ -2243,6 +5488,7 @@
+@@ -2226,6 +5477,7 @@
+     case TEX_FMT_R5G6B5:
+     case TEX_FMT_G8B8: texel_size = 2; break;
+     case TEX_FMT_A8R8G8B8:
++    case TEX_FMT_D8R8G8B8:
+     case TEX_FMT_DEPTH24_D8: texel_size = 4; break;
+     case RSX_TEX_FMT_W16Z16Y16X16_FLOAT: texel_size = 8; break;
+     default: return NULL;
+@@ -2243,6 +5495,7 @@
          }
          if (n_mips > available_mips) n_mips = available_mips;
          const u32 face_span = span / 6;
@@ -63815,7 +63877,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
          u8* rgba[6 * 14] = {0};
          tex_level_t cube_levels[6 * 14];
          u32 level = 0;
-@@ -2252,33 +5498,43 @@
+@@ -2252,33 +5505,43 @@
              for (u32 mip = 0; mip < n_mips; mip++) {
                  const u32 pitch = (mip == 0 && linear && t->pitch)
                      ? t->pitch : mw * texel_size;
@@ -63867,7 +63929,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
                  if (mw == 1 && mh == 1) break;
                  mw = mw > 1 ? mw >> 1 : 1;
                  mh = mh > 1 ? mh >> 1 : 1;
-@@ -2286,12 +5542,15 @@
+@@ -2286,12 +5549,15 @@
          }
          ID3D12Resource* resource = (!oom && level == 6 * n_mips)
              ? create_texture_cube(
@@ -63884,7 +63946,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
      u8* rgba[14] = {0};
      tex_level_t levels[14];
      u32 mw = w, mh = h, off = 0, n = 0;
-@@ -2299,9 +5558,13 @@
+@@ -2299,9 +5565,13 @@
      for (u32 m = 0; m < n_mips; m++) {
          const u32 pitch = (m == 0 && linear && t->pitch)
              ? t->pitch : mw * texel_size;
@@ -63900,7 +63962,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
          const u8* level_src = src + off;
          /* LD_PLANE_DUMP=1: write the first few big single-channel (B8) planes
           * straight out as PGM, exactly as the guest laid them down. Settles
-@@ -2322,13 +5585,19 @@
+@@ -2322,13 +5592,19 @@
                }
                pdn++;
            } }
@@ -63923,7 +63985,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
              }
          /* LD_TEXRGBA_DUMP=1: the DECODED level-0 RGBA, with a non-black count
           * and the remap that produced it.
-@@ -2375,16 +5644,16 @@
+@@ -2375,16 +5651,16 @@
          levels[n].w = mw;
          levels[n].h = mh;
          levels[n].data = rgba[n];
@@ -63943,7 +64005,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
      for (u32 m = 0; m < n; m++) free(rgba[m]);
      return resource;
  }
-@@ -2396,7 +5665,15 @@
+@@ -2396,7 +5672,15 @@
      const LONGLONG begin = ld_profile_qpc();
      g_ld_profile.total.texture_decode_calls++;
  #endif
@@ -63959,7 +64021,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
  #if defined(YZ_PERF_PROFILE)
      g_ld_profile.total.texture_decode_qpc +=
          (u64)(ld_profile_qpc() - begin);
-@@ -2410,7 +5687,32 @@
+@@ -2410,7 +5694,32 @@
      const int compressed = base_fmt == TEX_FMT_DXT1 ||
                             base_fmt == TEX_FMT_DXT23 ||
                             base_fmt == TEX_FMT_DXT45;
@@ -63993,7 +64055,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
          static const u32 sel2d3d[4] = { 3, 0, 1, 2 };
          static const u32 out2comp[4] = { 1, 2, 3, 0 };
          u32 mapping[4];
-@@ -2422,6 +5724,31 @@
+@@ -2422,6 +5731,31 @@
          }
          D3D12_SHADER_RESOURCE_VIEW_DESC desc = {0};
          desc.Format = !compressed ? DXGI_FORMAT_R8G8B8A8_UNORM
@@ -64025,7 +64087,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
                      : base_fmt == TEX_FMT_DXT1 ? DXGI_FORMAT_BC1_UNORM
                      : base_fmt == TEX_FMT_DXT23 ? DXGI_FORMAT_BC2_UNORM
                                                  : DXGI_FORMAT_BC3_UNORM;
-@@ -2460,9 +5787,384 @@
+@@ -2460,9 +5794,384 @@
      }
  }
  
@@ -64050,7 +64112,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
 +    case TEX_FMT_DXT23: case TEX_FMT_DXT45: *block = 16; break;
 +    case TEX_FMT_B8: *texel = 1; break;
 +    case TEX_FMT_A1R5G5B5: case TEX_FMT_A4R4G4B4: case TEX_FMT_R5G6B5: case TEX_FMT_G8B8: *texel = 2; break;
-+    case TEX_FMT_A8R8G8B8: *texel = 4; break;
++    case TEX_FMT_A8R8G8B8: case TEX_FMT_D8R8G8B8: *texel = 4; break;
 +    default: return NULL;
 +    }
 +    if (*block) {
@@ -64410,7 +64472,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
  static u32 texture_srv_slot(const rsx_dsp_texture* t)
  {
      const u32 remap = t->remap & 0xFFFF;
-@@ -2470,15 +6172,38 @@
+@@ -2470,15 +6179,38 @@
      if (refresh_enabled < 0)
          refresh_enabled = getenv("RSX_NO_TEX_REFRESH") ? 0 : 1;
  
@@ -64452,7 +64514,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
              int readable = 0;
              const u64 hash = texture_content_hash(t, &readable);
              /* LD_TEX_RACE=1: hash the SAME source twice, back to back. The two
-@@ -2526,10 +6251,18 @@
+@@ -2526,10 +6258,18 @@
                                t->pitch);
                } }
              entry->last_hash_frame = g_ld_frames;
@@ -64473,7 +64535,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
                      ID3D12Resource* old = entry->tex;
                      entry->tex = replacement;
                      entry->content_hash = hash;
-@@ -2546,6 +6279,7 @@
+@@ -2546,6 +6286,7 @@
                  }
              }
          }
@@ -64481,7 +64543,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
          entry->last_use_serial = ++g_ld_texture_use_serial;
          return entry->tex ? SRV_TEXTURE_BASE + i : SRV_WHITE;
      }
-@@ -2591,31 +6325,40 @@
+@@ -2591,31 +6332,40 @@
      replacement.pitch = t->pitch;
      replacement.remap = remap;
      replacement.cubemap = t->cubemap;
@@ -64526,7 +64588,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
      }
      return replacement.tex ? SRV_TEXTURE_BASE + index : SRV_WHITE;
  }
-@@ -2838,8 +6581,82 @@
+@@ -2838,8 +6588,82 @@
  /* fp constants are stored as raw bits; the shader reads them as floats. */
  static float ld_c2f(u32 bits) { float f; memcpy(&f, &bits, sizeof f); return f; }
  
@@ -64611,7 +64673,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
  {
      if (!want_w) want_w = g.width;
      if (!want_h) want_h = g.height;
-@@ -2865,11 +6682,11 @@
+@@ -2865,11 +6689,11 @@
       * aliasing, the fix is one surface plus a copy on redeclare -- not going
       * back to destroying content. */
      u32 slot = MAX_SURFACES;
@@ -64628,7 +64690,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
      /* Never destroy a usable render target because a malformed live command
       * briefly decoded a guest pointer as clip dimensions.  The known-good
       * orphanage stream never exceeds 1280x1024; D3D12 rejects the observed
-@@ -2901,16 +6718,25 @@
+@@ -2901,16 +6725,25 @@
        if (PS3_LOG_FIRST(new_logs, 24))
            fprintf(stderr, "[surfsz] new live surface %u:0x%X %ux%u (slot %u)\n",
                    location, offset, want_w, want_h, slot); }
@@ -64656,7 +64718,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
          g.dev, &hp, D3D12_HEAP_FLAG_NONE, &rd,
          D3D12_RESOURCE_STATE_RENDER_TARGET, &cv,
          &IID_ID3D12Resource, (void**)&replacement);
-@@ -2939,19 +6765,74 @@
+@@ -2939,19 +6772,74 @@
      }
      for (u32 j = 0; j < LD_SWIN_PER; j++)   /* windows are sized and typed for the old resource */
          if (s->swin[j].tex) { retire_texture(s->swin[j].tex); s->swin[j].tex = NULL; }
@@ -64733,7 +64795,16 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
  }
  
  /* A texture smaller than the colour surface it aliases reads the surface's memory texel for
-@@ -2992,12 +6873,25 @@
+@@ -2984,7 +6872,7 @@
+     switch (format & TEX_FMT_BASE_MASK) {
+     case RSX_TEX_FMT_B8: return 1u;
+     case RSX_TEX_FMT_A1R5G5B5: case RSX_TEX_FMT_A4R4G4B4: case RSX_TEX_FMT_R5G6B5: case RSX_TEX_FMT_G8B8: return 2u;
+-    case RSX_TEX_FMT_A8R8G8B8: case RSX_TEX_FMT_DEPTH24_D8: case RSX_TEX_FMT_X32_FLOAT: case RSX_TEX_FMT_Y16X16_FLOAT:
++    case RSX_TEX_FMT_A8R8G8B8: case TEX_FMT_D8R8G8B8: case RSX_TEX_FMT_DEPTH24_D8: case RSX_TEX_FMT_X32_FLOAT: case RSX_TEX_FMT_Y16X16_FLOAT:
+         return 4u;
+     case RSX_TEX_FMT_W16Z16Y16X16_FLOAT: return 8u;
+     case RSX_TEX_FMT_W32Z32Y32X32_FLOAT: return 16u;
+@@ -2992,12 +6880,25 @@
      }
  }
  static u64 g_ld_swin_copies;
@@ -64761,7 +64832,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
      if (w > s->w || h > s->h) return -1;
      const u32 sb = s->fmt == DXGI_FORMAT_R16G16B16A16_FLOAT ? 8u : 4u;   /* the surface formats live-draw creates */
      const u32 tb = ld_tex_texel_bytes(t->format);
-@@ -3012,11 +6906,32 @@
+@@ -3012,11 +6913,32 @@
          }
          return -1;
      }
@@ -64795,7 +64866,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
          k = 0;
          for (u32 j = 1; j < LD_SWIN_PER; j++)
              if (!s->swin[j].tex || (s->swin[k].tex && s->swin[j].used < s->swin[k].used)) k = j;
-@@ -3024,12 +6939,13 @@
+@@ -3024,12 +6946,13 @@
          s->swin[k].tex = NULL;
          D3D12_RESOURCE_DESC rd;
          s->tex->lpVtbl->GetDesc(s->tex, &rd);              /* the surface's format and sample count */
@@ -64811,7 +64882,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
                  D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, NULL, &IID_ID3D12Resource, (void**)&wt))) {
              static u32 n_fail;
              if (n_fail++ < 8)
-@@ -3037,7 +6953,7 @@
+@@ -3037,7 +6960,7 @@
                          w, h);
              return -1;
          }
@@ -64820,7 +64891,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
          s->swin[k].wgen = s->swin_wgen - 1u;
          srv_write(SRV_SURF_WIN_BASE + si * LD_SWIN_PER + k, wt);
          static u32 n_log;
-@@ -3045,6 +6961,7 @@
+@@ -3045,6 +6968,7 @@
              fprintf(stderr, "[swin] %u:0x%X surface %ux%u pitch=%u -> window %ux%u (slot %u.%u)\n",
                      s->location, s->offset, s->w, s->h, s->pitch, w, h, si, k);
      }
@@ -64828,7 +64899,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
      if (dbg) {
          static u32 n_hit;
          if (n_hit++ < 24)
-@@ -3069,8 +6986,19 @@
+@@ -3069,8 +6993,19 @@
          D3D12_TEXTURE_COPY_LOCATION dst = {0}, src = {0};
          dst.pResource = s->swin[k].tex; dst.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
          src.pResource = s->tex;         src.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
@@ -64849,7 +64920,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
          b[0].Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_SOURCE;
          b[0].Transition.StateAfter = D3D12_RESOURCE_STATE_RENDER_TARGET;
          b[1].Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
-@@ -3099,13 +7027,15 @@
+@@ -3099,13 +7034,15 @@
          b[k].Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
      }
      int fresh = 0;
@@ -64866,7 +64937,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
                  g.dev, &hp, D3D12_HEAP_FLAG_NONE, &rd,
                  D3D12_RESOURCE_STATE_COPY_DEST, NULL,
                  &IID_ID3D12Resource, (void**)&s->fb_tex))) {
-@@ -3122,7 +7052,17 @@
+@@ -3122,7 +7059,17 @@
      b[1].Transition.StateBefore = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
      b[1].Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_DEST;
      g.list->lpVtbl->ResourceBarrier(g.list, fresh ? 1 : 2, b);
@@ -64884,7 +64955,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
      b[0].Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_SOURCE;
      b[0].Transition.StateAfter = D3D12_RESOURCE_STATE_RENDER_TARGET;
      b[1].Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
-@@ -3131,18 +7071,173 @@
+@@ -3131,18 +7078,173 @@
      return SRV_FEEDBACK_BASE + slot;
  }
  
@@ -65065,7 +65136,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
  }
  
  /* NV3089 scaled-image blit whose SOURCE is a live surface: the pixels exist
-@@ -3299,19 +7394,19 @@
+@@ -3299,19 +7401,19 @@
      b.Transition.StateAfter = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
      g.list->lpVtbl->ResourceBarrier(g.list, 1, &b);
      const D3D12_CPU_DESCRIPTOR_HANDLE rtv = rtv_handle(LD_SWAP_BUFFERS + di);
@@ -65092,7 +65163,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
      g.list->lpVtbl->DrawInstanced(g.list, 3, 1, 0, 0);
      b.Transition.StateBefore = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
      b.Transition.StateAfter = D3D12_RESOURCE_STATE_RENDER_TARGET;
-@@ -3412,7 +7507,292 @@
+@@ -3412,7 +7514,292 @@
      return pso;
  }
  
@@ -65386,7 +65457,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
   * destination surface rect (dx,dy,dw,dh). Returns 1 when recorded. */
  static int ld_scaled_blit(u32 si, float sx, float sy, float sw, float sh,
                            u32 di, u32 dx, u32 dy, u32 dw, u32 dh)
-@@ -3420,6 +7800,8 @@
+@@ -3420,6 +7807,8 @@
      surface_t* s = &g.surfaces[si];
      surface_t* d = &g.surfaces[di];
      if (!s->tex || !d->tex || !s->w || !s->h || !dw || !dh) return 0;
@@ -65395,7 +65466,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
      ID3D12PipelineState* pso = ld_scaled_blit_pso(d->fmt);
      if (!pso) return 0;
      u32 slots[SRV_TABLE_SIZE];
-@@ -3437,20 +7819,20 @@
+@@ -3437,20 +7826,20 @@
      g.list->lpVtbl->ResourceBarrier(g.list, 1, &b);
  
      D3D12_CPU_DESCRIPTOR_HANDLE rtv = rtv_handle(LD_SWAP_BUFFERS + di);
@@ -65423,7 +65494,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
      g.list->lpVtbl->DrawInstanced(g.list, 3, 1, 0, 0);
  
      b.Transition.StateBefore = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
-@@ -3498,6 +7880,7 @@
+@@ -3498,6 +7887,7 @@
      const u32 slot = surface_get(db->location, db->offset, db->width, db->height, g.surfaces[si].fmt);
      if (slot == LD_INVALID_SURFACE || (int)slot == si) return 0;
      surface_t* dst = &g.surfaces[slot];
@@ -65431,7 +65502,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
      if (scaled) {
          /* Source extent in the blit's source units, which match host pixels
           * for a surface the host renders at its guest size. */
-@@ -3519,6 +7902,11 @@
+@@ -3519,6 +7909,11 @@
      if (sx + w * k > g.surfaces[si].w) w = (g.surfaces[si].w - sx) / k;
      if (sy + h * k > g.surfaces[si].h) h = (g.surfaces[si].h - sy) / k;
      if (!w || !h) return 0;
@@ -65443,7 +65514,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
      if (k > 1) {
          if (!ld_downsample((u32)si, sx, sy, k, slot, dx, dy, w, h)) return 0;
          ld_surface_note_write(slot, LD_SURFACE_WRITE_COPY);
-@@ -3539,6 +7927,7 @@
+@@ -3539,6 +7934,7 @@
      dl.pResource = dst->tex; dl.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
      D3D12_BOX box = { sx, sy, 0, sx + w, sy + h, 1 };
      g.list->lpVtbl->CopyTextureRegion(g.list, &dl, dx, dy, 0, &sl, &box);
@@ -65451,7 +65522,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
      for (int q = 0; q < 2; q++) {
          b[q].Transition.StateBefore = b[q].Transition.StateAfter;
          b[q].Transition.StateAfter = D3D12_RESOURCE_STATE_RENDER_TARGET;
-@@ -3589,6 +7978,9 @@
+@@ -3589,6 +7985,9 @@
      }
      if (di == si) return -4;
      if (g.surfaces[di].fmt != g.surfaces[si].fmt) return -5;
@@ -65461,7 +65532,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
      ID3D12Resource* src = g.surfaces[si].tex;
      ID3D12Resource* dst = g.surfaces[di].tex;
      D3D12_RESOURCE_BARRIER b[2] = {0};
-@@ -3605,6 +7997,7 @@
+@@ -3605,6 +8004,7 @@
      d.pResource = dst; d.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
      D3D12_BOX box = { sx, sy, 0, sx + w, sy + h, 1 };
      g.list->lpVtbl->CopyTextureRegion(g.list, &d, dx, dy, 0, &s, &box);
@@ -65469,7 +65540,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
      for (int k = 0; k < 2; k++) {
          b[k].Transition.StateBefore = b[k].Transition.StateAfter;
          b[k].Transition.StateAfter = D3D12_RESOURCE_STATE_RENDER_TARGET;
-@@ -3618,12 +8011,27 @@
+@@ -3618,12 +8018,27 @@
  {
      rsx_dsp_surface sf;
      rsx_dsp_get_surface(&g.rsx, &sf);
@@ -65500,7 +65571,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
      return slot;
  }
  
-@@ -3670,15 +8078,15 @@
+@@ -3670,15 +8085,15 @@
      hp.Type = D3D12_HEAP_TYPE_DEFAULT;
      D3D12_RESOURCE_DESC rd = {0};
      rd.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
@@ -65519,7 +65590,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
              g.dev, &hp, D3D12_HEAP_FLAG_NONE, &rd,
              D3D12_RESOURCE_STATE_UNORDERED_ACCESS, NULL,
              &IID_ID3D12Resource, (void**)&snap))) {
-@@ -3702,8 +8110,412 @@
+@@ -3702,8 +8117,412 @@
      z->snapshot_valid = 0;
  }
  
@@ -65934,7 +66005,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
  {
      if (!honor_zeta_track()) return 0;
      /* The DSV must cover the complete live framebuffer/viewport it is bound
-@@ -3713,19 +8525,67 @@
+@@ -3713,19 +8532,67 @@
       * backing remains a separate SRV concern. */
      u32 want_w = rt_w > g.width ? rt_w : g.width;
      u32 want_h = rt_h > g.height ? rt_h : g.height;
@@ -66005,7 +66076,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
          if (g.n_zdepths >= MAX_SURFACES) {
              fprintf(stderr, "[zetatrack] live cache full; shared fallback\n");
              return 0;
-@@ -3750,14 +8610,44 @@
+@@ -3750,14 +8617,44 @@
              retire_texture(old->snapshot);
              old->snapshot = NULL;
          }
@@ -66052,7 +66123,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
      rd.DepthOrArraySize = 1;
      rd.MipLevels = 1;
      rd.Format = DXGI_FORMAT_R32G8X24_TYPELESS;
-@@ -3769,7 +8659,7 @@
+@@ -3769,7 +8666,7 @@
      cv.Format = DXGI_FORMAT_D32_FLOAT_S8X24_UINT;
      cv.DepthStencil.Depth = 1.0f;
      zdepth_t* z = &g.zdepths[slot];
@@ -66061,7 +66132,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
              g.dev, &hp, D3D12_HEAP_FLAG_NONE, &rd,
              D3D12_RESOURCE_STATE_DEPTH_WRITE, &cv,
              &IID_ID3D12Resource, (void**)&z->tex);
-@@ -3784,17 +8674,25 @@
+@@ -3784,17 +8681,25 @@
      z->offset = offset;
      z->w = want_w;
      z->h = want_h;
@@ -66091,7 +66162,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
  
      /* D3D12 forbids a partial CopyTextureRegion from a depth/stencil
       * resource.  Keep the replay-proven logical dimensions and resolve the
-@@ -3802,14 +8700,14 @@
+@@ -3802,14 +8707,14 @@
       * not a depth-resource copy operation. */
      D3D12_RESOURCE_DESC snapshot_rd = {0};
      snapshot_rd.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
@@ -66109,7 +66180,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
              g.dev, &hp, D3D12_HEAP_FLAG_NONE, &snapshot_rd,
              D3D12_RESOURCE_STATE_UNORDERED_ACCESS, NULL,
              &IID_ID3D12Resource, (void**)&z->snapshot);
-@@ -3836,8 +8734,153 @@
+@@ -3836,8 +8741,153 @@
              "clip=%ux%u canvas=%ux%u\n",
              slot, location, offset, want_w, want_h,
              rt_w, rt_h, g.width, g.height);
@@ -66263,7 +66334,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
  }
  
  /* Preserve the last completed depth-writing pass before the guest clears or
-@@ -3852,7 +8895,7 @@
+@@ -3852,7 +8902,7 @@
      if (!z->snapshot || !g.depth_snapshot_rootsig ||
          !g.depth_snapshot_pso)
          return 0;
@@ -66272,7 +66343,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
  
      D3D12_GPU_DESCRIPTOR_HANDLE source_table, destination_table;
      if (!depth_snapshot_descriptors(
-@@ -3886,8 +8929,8 @@
+@@ -3886,8 +8936,8 @@
      g.list->lpVtbl->ResourceBarrier(g.list, nbar, bars);
  
      ID3D12DescriptorHeap* heaps[] = {g.srv_heap, g.smp_heap};
@@ -66283,7 +66354,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
      g.list->lpVtbl->SetComputeRootSignature(
          g.list, g.depth_snapshot_rootsig);
      g.list->lpVtbl->SetComputeRootDescriptorTable(
-@@ -3895,8 +8938,9 @@
+@@ -3895,8 +8945,9 @@
      g.list->lpVtbl->SetComputeRootDescriptorTable(
          g.list, 1, destination_table);
      g.list->lpVtbl->Dispatch(
@@ -66295,7 +66366,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
  
      D3D12_RESOURCE_BARRIER uav_done = {0};
      uav_done.Type = D3D12_RESOURCE_BARRIER_TYPE_UAV;
-@@ -3926,6 +8970,141 @@
+@@ -3926,6 +8977,141 @@
      return 1;
  }
  
@@ -66437,7 +66508,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
  /* ---------------------------------------------------------------------------
   * PSO cache (VP+FP+render-state keyed)
   * -----------------------------------------------------------------------*/
-@@ -3939,11 +9118,7 @@
+@@ -3939,11 +9125,7 @@
  static int sampler_table_needs_flush(const u32 slots[SMP_TABLE_SIZE])
  {
      if (g.smp_ring_used < SMP_RING_TABLES) return 0;
@@ -66450,7 +66521,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
  }
  
  static u32 shader_disk_cache_stage_index(u32 stage)
-@@ -3968,6 +9143,11 @@
+@@ -3968,6 +9150,11 @@
              (unsigned long long)g_ld_shader_disk_rejects);
  }
  
@@ -66462,7 +66533,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
  static int shader_disk_cache_prepare(void)
  {
      if (g_ld_shader_disk_ready >= 0)
-@@ -4006,6 +9186,15 @@
+@@ -4006,6 +9193,15 @@
      g_ld_shader_disk_ready = 1;
      fprintf(stderr, "[shader-disk-cache] enabled dir='%s' version=%u\n",
              g_ld_shader_disk_dir, SHADER_DISK_CACHE_VERSION);
@@ -66478,7 +66549,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
      return 1;
  }
  
-@@ -4021,11 +9210,270 @@
+@@ -4021,11 +9217,270 @@
      return length > 0 && length < MAX_PATH;
  }
  
@@ -66749,7 +66820,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
      if (!shader_disk_cache_path(path, stage, hash, source_length))
          return NULL;
  
-@@ -4076,6 +9524,62 @@
+@@ -4076,6 +9531,62 @@
      return blob;
  }
  
@@ -66812,7 +66883,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
  static void shader_disk_cache_store(
      u32 stage, const char* source, u32 source_length, u64 hash,
      ID3DBlob* blob)
-@@ -4104,25 +9608,30 @@
+@@ -4104,25 +9615,30 @@
      header.blob_length = (u32)blob_length;
      header.source_hash = hash;
  
@@ -66861,7 +66932,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
  }
  
  static u64 ld_hash_structural_render_state(
-@@ -4163,6 +9672,10 @@
+@@ -4163,6 +9679,10 @@
      LD_HASH_RENDER_FIELD(bs_fail);
      LD_HASH_RENDER_FIELD(bs_zfail);
      LD_HASH_RENDER_FIELD(bs_zpass);
@@ -66872,7 +66943,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
  #undef LD_HASH_RENDER_FIELD
      return hash;
  }
-@@ -4403,6 +9916,1226 @@
+@@ -4403,6 +9923,1226 @@
      return mask;
  }
  
@@ -68099,7 +68170,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
  static ID3D12PipelineState* build_pso(
      const char* vs_hlsl, const char* ps_hlsl, const render_state_t* rs,
      const rsx_vertex_layout_plan* masked_layout, int packed_offsets)
-@@ -4416,6 +11149,15 @@
+@@ -4416,6 +11156,15 @@
          vs_hlsl, vs_length, 1469598103934665603ull);
      const u64 ps_hash = fnv1a(
          ps_hlsl, ps_length, 1469598103934665603ull);
@@ -68115,7 +68186,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
  #if defined(YZ_PERF_PROFILE)
      ld_profile_note_hlsl(
          vs_hlsl, g_ld_profile.vs_hashes, &g_ld_profile.n_vs_hashes,
-@@ -4548,41 +11290,19 @@
+@@ -4548,41 +11297,19 @@
          err = NULL;
      }
      D3D12_INPUT_ELEMENT_DESC il[16];
@@ -68163,7 +68234,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
  #if defined(YZ_PERF_PROFILE)
      g_ld_profile.total.create_pso_qpc +=
          (u64)(ld_profile_qpc() - create_begin);
-@@ -4601,6 +11321,11 @@
+@@ -4601,6 +11328,11 @@
              ld_dump_dred("CreateGraphicsPipelineState", hr);
      }
      vs->lpVtbl->Release(vs); ps->lpVtbl->Release(ps);
@@ -68175,7 +68246,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
      return SUCCEEDED(hr) ? pso : NULL;
  }
  
-@@ -4641,21 +11366,533 @@
+@@ -4641,21 +11373,533 @@
  #define LD_PSO_BAIL(reason) \
      do { static int _said_ = 0; ld_pso_bail(&_said_, (reason)); } while (0)
  
@@ -68712,7 +68783,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
      if (!fp_size) {
          /* No END-bit instruction in 64 KB: the bytes at (location, offset) are
           * not a fragment program. Almost always the LOCATION is wrong, not the
-@@ -4708,15 +11945,102 @@
+@@ -4708,15 +11952,102 @@
      static int ctrl_auto = -1;
      if (ctrl_auto < 0) ctrl_auto = getenv("RSX_FP_CTRL_AUTO") ? 1 : 0;
      const u32 fp_ctrl = ctrl_auto ? RSX_FP_CTRL_AUTO : rsx_dsp_shader_control(&g.rsx);
@@ -68819,7 +68890,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
      if (txl_mask && !(txl_mask & vtex_mask)) {
          g_ld_vtex_missing_for_txl++;
          static u32 warned = 0;
-@@ -4744,33 +12068,57 @@
+@@ -4744,33 +12075,57 @@
  
      render_state_t rs;
      decode_render_state(&rs);
@@ -68892,7 +68963,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
      /* Texel-addressed (RSX_TEX_FMT_UNNORM) units need their coordinates divided
       * by the texture size in the shader -- D3D12 has no unnormalised addressing
       * mode. The divisor is baked into the HLSL, so the sizes are part of the
-@@ -4778,12 +12126,16 @@
+@@ -4778,12 +12133,16 @@
      u32 unnorm_mask = 0;
      u32 unnorm_dim[16][3] = {{0}};
      for (u32 uu = 0; uu < 16; uu++) {
@@ -68912,7 +68983,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
          /* A depth texture bound to a zeta's snapshot reads that host
           * resource, which is as large as the largest pass that used the zeta
           * (bounded by the zeta), not as large as the texture. Texel
-@@ -4791,11 +12143,14 @@
+@@ -4791,11 +12150,14 @@
           * smaller than the zeta then reads its top-left corner, as it does in
           * VRAM, instead of a stretched copy of the whole depth buffer. */
          if ((ut.format & TEX_FMT_BASE_MASK & ~(u32)TEX_FMT_UNNORM) ==
@@ -68928,7 +68999,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
                  /* Only when the bind will take the snapshot (it has, or
                   * will copy, a depth-writing pass); a zeta that was only
                   * cleared is read from guest memory at texture size. */
-@@ -4809,6 +12164,68 @@
+@@ -4809,6 +12171,68 @@
              }
          }
      }
@@ -68997,7 +69068,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
      key = fnv1a(&unnorm_mask, sizeof(unnorm_mask), key);
      if (unnorm_mask) key = fnv1a(unnorm_dim, sizeof(unnorm_dim), key);
      if (masked_layout) {
-@@ -4828,21 +12245,26 @@
+@@ -4828,21 +12252,26 @@
          key = ld_hash_structural_render_state(&rs, key);
      else
          key = fnv1a(&rs, sizeof(rs), key);
@@ -69026,7 +69097,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
      g_ld_current_pso.vtex_mask = vtex_mask;
      g_ld_current_pso.txl_mask = txl_mask;
      g_ld_current_pso.input_mask =
-@@ -4856,21 +12278,36 @@
+@@ -4856,21 +12285,36 @@
  #if defined(YZ_PERF_PROFILE)
      g_ld_profile.total.pso_lookups++;
  #endif
@@ -69067,7 +69138,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
  #if defined(YZ_PERF_PROFILE)
          g_ld_profile.total.pso_full++;
  #endif
-@@ -4895,11 +12332,23 @@
+@@ -4895,11 +12339,23 @@
      u32 decompiled_constant_count = 0;
      int fi;
      if (ld_fp_constants_buffered()) {
@@ -69093,7 +69164,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
              fi = -1;
          if (fi > 0 && rs.alpha_test_enable &&
              rsx_fp_apply_alpha_test_buffered(
-@@ -4907,7 +12356,7 @@
+@@ -4907,7 +12363,7 @@
              fi = -1;
          if (fi > 0) {
              const int np = rsx_fp_apply_unnorm_scale(
@@ -69102,7 +69173,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
              { static int n = 0;
                if (PS3_LOG_FIRST(n, 8))
                    fprintf(stderr, "[unnorm] mask=0x%X cube=0x%X dim0=%ux%u"
-@@ -4934,6 +12383,139 @@
+@@ -4934,6 +12390,139 @@
      g_ld_profile.total.decompile_qpc +=
          (u64)(ld_profile_qpc() - decompile_begin);
  #endif
@@ -69242,7 +69313,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
      /* LD_FORCE_GREEN=1: make every fragment program return solid green.
       *
       * The same trick as LD_CLEAR_TEST, applied one stage later. Clears are
-@@ -4982,18 +12564,39 @@
+@@ -4982,18 +12571,39 @@
        if (hd == (const char*)-1) hd = getenv("LD_HLSL_DUMP");
        if (hd) {
          char fn[MAX_PATH]; FILE* f;
@@ -69284,7 +69355,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
      return pso;
  }
  
-@@ -5010,11 +12613,13 @@
+@@ -5010,11 +12620,13 @@
       * constants so fp_alpha retains a valid 16-byte slot. */
      const u32 value_slots =
          g.fp_constants.count ? g.fp_constants.count : 1u;
@@ -69300,7 +69371,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
          &offset, &allocation_bytes);
      if (plan < 0) {
  #if defined(YZ_PERF_PROFILE)
-@@ -5028,7 +12633,7 @@
+@@ -5028,7 +12640,7 @@
              return 0;
          g.ps_cb_used = 0;
          plan = rsx_fp_constant_ring_plan(
@@ -69309,7 +69380,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
              &offset, &allocation_bytes);
          if (plan != 1) {
  #if defined(YZ_PERF_PROFILE)
-@@ -5050,7 +12655,33 @@
+@@ -5050,7 +12662,33 @@
      memcpy(
          destination + value_slots * 16u,
          &g.fp_alpha_ref, sizeof(g.fp_alpha_ref));
@@ -69343,7 +69414,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
  #if defined(YZ_PERF_PROFILE)
      g_ld_profile.total.ps_constant_allocations++;
      g_ld_profile.total.ps_constant_upload_bytes += data_bytes;
-@@ -5077,6 +12708,9 @@
+@@ -5077,6 +12715,9 @@
       * index order, which is what makes the offsets derivable at all (an
       * inline stream carries no per-array offset registers). */
      const u8* inl; u32 inl_bytes, inl_stride; u32 inl_off[16];
@@ -69353,7 +69424,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
      batch_t arr[256]; u32 n_arr;
      batch_t idx[256]; u32 n_idx;
      u32     n_packets;
-@@ -5108,6 +12742,7 @@
+@@ -5108,6 +12749,7 @@
      dc.n_cuts = 0;
      dc.fetch_ok = 1;
      dc.inl = NULL; dc.inl_bytes = dc.inl_stride = 0;
@@ -69361,7 +69432,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
  }
  static void push_vert(const vtx_t* v)
  {
-@@ -5332,9 +12967,1233 @@
+@@ -5332,9 +12974,1233 @@
          }
  }
  
@@ -70595,7 +70666,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
      for (u32 batch = 0; batch < dc.n_arr && dc.fetch_ok; batch++)
          for (u32 i = 0; i < dc.arr[batch].count && dc.fetch_ok; i++)
              push_compact_ref(dc.arr[batch].first + i, 0);
-@@ -5365,7 +14224,33 @@
+@@ -5365,7 +14231,33 @@
                  contiguous = guest_ptr(
                      index_array.location, (u32)start64, (u32)bytes64);
              }
@@ -70629,7 +70700,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
                  const u32 source_offset =
                      index_array.offset + (first + i) * element_size;
                  const u8* source = contiguous
-@@ -5397,30 +14282,75 @@
+@@ -5397,30 +14289,75 @@
  
      if (!dc.fetch_ok)
          return;
@@ -70713,7 +70784,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
              return;
          }
          for (u32 i = 0; i < dc.n_refs; i++) {
-@@ -5462,6 +14392,32 @@
+@@ -5462,6 +14399,32 @@
      dc.n_verts = dc.n_refs;
  }
  
@@ -70746,7 +70817,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
  static const float* dc_vertex_attr(
      u32 vertex, u32 attr, float fallback[4])
  {
-@@ -5484,6 +14440,8 @@
+@@ -5484,6 +14447,8 @@
  static const float* dc_vertex_attr_canonical(
      u32 vertex, u32 attr, float fallback[4])
  {
@@ -70755,7 +70826,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
      if (!ld_vertex_compact_payload())
          return dc.verts[vertex].a[attr];
      const s8 slot = dc.layout.slot_by_attr[attr];
-@@ -6099,7 +15057,7 @@
+@@ -6099,7 +15064,7 @@
      bd.Format = DXGI_FORMAT_UNKNOWN;
      bd.SampleDesc.Count = 1;
      bd.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
@@ -70764,7 +70835,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
              g.dev, &hp, D3D12_HEAP_FLAG_NONE, &bd,
              D3D12_RESOURCE_STATE_COPY_DEST, NULL,
              &IID_ID3D12Resource, (void**)&g.movie_overlay_readback))) {
-@@ -6124,7 +15082,7 @@
+@@ -6124,7 +15089,7 @@
       * dedicated upload buffer lets host presentation append to the same
       * command list without a second fence/wait on every movie frame. */
      hp.Type = D3D12_HEAP_TYPE_UPLOAD;
@@ -70773,7 +70844,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
              g.dev, &hp, D3D12_HEAP_FLAG_NONE, &bd,
              D3D12_RESOURCE_STATE_GENERIC_READ, NULL,
              &IID_ID3D12Resource, (void**)&g.movie_upload))) {
-@@ -6192,6 +15150,12 @@
+@@ -6192,6 +15157,12 @@
          return;
      }
      ID3D12Resource* rt = g.surfaces[target].tex;
@@ -70786,7 +70857,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
      D3D12_RESOURCE_BARRIER b = {0};
      b.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
      b.Transition.pResource = rt;
-@@ -6305,7 +15269,20 @@
+@@ -6305,7 +15276,20 @@
      ld_movie_reset_rings();
  }
  
@@ -70808,7 +70879,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
  static void sink_draw_arrays(void* u, const rsx_dispatch* r, u32 first, u32 count)
  {
      (void)u; (void)r; g_ld_stats.packets_seen++;
-@@ -6341,6 +15318,39 @@
+@@ -6341,6 +15325,39 @@
      if (dc.n_arr >= 256) { g_ld_stats.packets_queue_full++; return; }
      dc.arr[dc.n_arr].first = 0; dc.arr[dc.n_arr].count = bytes / stride;
      dc.n_arr++;
@@ -70848,7 +70919,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
      g_ld_stats.packets_queued++;
  }
  
-@@ -6579,6 +15589,34 @@
+@@ -6579,6 +15596,34 @@
      if (rs.blend_enable)
          fprintf(file, "bf=%X/%X/%X/%X eq=%X/%X ", rs.sf_rgb, rs.df_rgb, rs.sf_a, rs.df_a,
                  rs.eq_rgb, rs.eq_a);
@@ -70883,7 +70954,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
      fprintf(file, "at=%u/0x%X/0x%X ", rs.alpha_test_enable, rs.alpha_func, rs.alpha_ref_raw);
      fprintf(file, "sc=%08X/%08X ", rsx_dsp_reg(&g.rsx, M_SCISSOR_HORIZONTAL), rsx_dsp_reg(&g.rsx, M_SCISSOR_VERTICAL));
      if (rs.stencil_enable)
-@@ -7000,10 +16038,12 @@
+@@ -7000,10 +16045,12 @@
      }
  }
  
@@ -70900,7 +70971,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
          : occurrence;
  }
  
-@@ -7063,9 +16103,414 @@
+@@ -7063,9 +16110,414 @@
      }
  }
  
@@ -71315,7 +71386,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
      if (g_ld_movie_mode && !ld_movie_composite_ui_enabled()) return;
      if (!dc.n_packets) { g_ld_stats.groups_empty++; return; }
      g_ld_stats.groups_seen++;
-@@ -7094,6 +16539,7 @@
+@@ -7094,6 +16546,7 @@
              for (u32 i = 0; i < 16; i++)
                  g.rsx.constants[108 + i / 4][i % 4] =
                      g_ld_a010_camera_bits[i];
@@ -71323,7 +71394,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
              static u64 repairs = 0;
              repairs++;
              if (repairs <= 16 || (repairs & (repairs - 1)) == 0) {
-@@ -7124,8 +16570,65 @@
+@@ -7124,8 +16577,65 @@
          g_ld_profile.total_used_attribute_max = used_layout.count;
      const LONGLONG fetch_pack_begin = ld_profile_qpc();
  #endif
@@ -71391,7 +71462,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
      } else if (ld_vertex_hoist_fetch()) {
          rsx_vertex_layout_plan legacy_layout;
          ld_layout_plan_get(0xFFFFu, &legacy_layout);
-@@ -7139,41 +16642,74 @@
+@@ -7139,41 +16649,74 @@
      g_ld_profile.total.vertex_fetch_pack_qpc +=
          (u64)(ld_profile_qpc() - fetch_pack_begin);
  #endif
@@ -71478,7 +71549,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
          /*
           * The replay-proven renderer recycles this upload ring mid-frame.
           * Live used to drop every remaining draw instead, which discarded
-@@ -7189,17 +16725,28 @@
+@@ -7189,17 +16732,28 @@
          g.srv_ring_used = 0;
          g.smp_ring_used = 0;
      }
@@ -71509,7 +71580,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
      if (!pso) {
  #if defined(YZ_PERF_PROFILE)
          ld_profile_note_rejected_pso();
-@@ -7209,8 +16756,9 @@
+@@ -7209,8 +16763,9 @@
          return;   /* no fallback in live path */
      }
      u32 vertex_cb_offset = 0;
@@ -71520,7 +71591,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
      if (vertex_cb_plan == 0) {
  #if !defined(YZ_PERF_CLEAN)
          g_ld_vertex_constant_ring_recycles++;
-@@ -7226,7 +16774,7 @@
+@@ -7226,7 +16781,7 @@
              return;
          g.cb_used = 0;
          vertex_cb_plan = rsx_vertex_constant_ring_plan(
@@ -71529,7 +71600,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
              &vertex_cb_offset);
      }
      if (vertex_cb_plan != 1) {
-@@ -7258,6 +16806,24 @@
+@@ -7258,6 +16813,24 @@
                rsx_dsp_texture st; rsx_dsp_get_texture(&g.rsx, u, &st);
                if (st.enabled && st.offset == (u32)skip) return;
            } }
@@ -71554,7 +71625,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
      /* LD_TRACE_PSO=<hex key>: raw vertex attributes + unit-0 texels of the
       * first three draws with that CSV pso_key. */
      { static u64 tk = 1; static int tn;
-@@ -7350,12 +16916,16 @@
+@@ -7350,12 +16923,16 @@
          rsx_dsp_get_surface(&g.rsx, &msf);
          const u32 want = ld_rt_count(msf.color_target);
          for (u32 r = 1; r < want; r++) {
@@ -71573,7 +71644,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
              mrt[n_mrt++] = s;
          }
      }
-@@ -7368,13 +16938,66 @@
+@@ -7368,13 +16945,66 @@
      rsx_dsp_viewport vp;
      rsx_dsp_get_surface(&g.rsx, &sf);
      rsx_dsp_get_viewport(&g.rsx, &vp);
@@ -71642,7 +71713,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
      for (u32 u = 0; u < SRV_TABLE_SIZE; u++) slots[u] = SRV_WHITE;
      for (u32 u = 0; u < SMP_TABLE_SIZE; u++) smp_slots[u] = SMP_DEFAULT;
      /* A draw that samples its own zeta while not writing depth (deferred
-@@ -7423,7 +17046,11 @@
+@@ -7423,7 +17053,11 @@
                }
            }
        } }
@@ -71654,7 +71725,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
          rsx_dsp_texture t; rsx_dsp_get_texture(&g.rsx, u, &t);
          /* LD_PS1_BUF0=1 -- DIAGNOSTIC, not a fix. Force a 24-bit PS1 VRAM
           * bind at buffer 1 (offset 0x4003C0) to sample buffer 0 (0x400000).
-@@ -7441,7 +17068,49 @@
+@@ -7441,7 +17075,49 @@
                t.offset = 0x400000u; }
          if (!t.enabled) continue;
          texture_mask |= 1u << u;
@@ -71704,7 +71775,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
          /* Pick WHICH surface at this offset to sample.
           *
           * Matching on (location, offset) alone was fine when only one surface
-@@ -7463,7 +17132,8 @@
+@@ -7463,7 +17139,8 @@
           * depth read: try the zeta first. Before, the colour surface at the
           * same address was taken (zeros). */
          int zeta_pref = 0;
@@ -71714,7 +71785,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
              for (u32 i = 0; i < g.n_zdepths; i++)
                  if (g.zdepths[i].location == t.location &&
                      g.zdepths[i].offset == t.offset &&
-@@ -7471,18 +17141,37 @@
+@@ -7471,18 +17148,37 @@
                      zeta_pref = 1;
                      break;
                  }
@@ -71756,7 +71827,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
          /* LD_UVDBG=1: the texture coordinates of the draw that samples the PS1
           * framebuffer. Placed here rather than in fetch_batches because that
           * function is not on this draw's path -- probing it printed nothing at
-@@ -7559,7 +17248,68 @@
+@@ -7559,7 +17255,68 @@
                    }
                }
            } }
@@ -71826,7 +71897,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
              static u32 n_dbg = 0;
              if (PS3_LOG_FIRST(n_dbg, 24)) {
                  fprintf(stderr, "[alias-miss] tex %u:0x%08X fmt=0x%02X %ux%u target=%u surf:",
-@@ -7572,8 +17322,10 @@
+@@ -7572,8 +17329,10 @@
          }
          if (sampled < 0 && !zeta_pref && g.surfaces[target].location == t.location &&
              g.surfaces[target].offset == t.offset) {
@@ -71839,7 +71910,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
              g_ld_bind_surf++;
          } else if (sampled >= 0) {
              /* LD_ALIAS_DBG also reports the HIT. A texture that aliases a render
-@@ -7595,6 +17347,10 @@
+@@ -7595,6 +17354,10 @@
                              g.surfaces[sampled].offset,
                              g.surfaces[sampled].w, g.surfaces[sampled].h);
              }
@@ -71850,7 +71921,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
              {   /* a smaller texture reads the surface's top-left samples, texel for sample */
                  const int sw = surface_window((u32)sampled, &t, alias_dbg);
                  if (sw >= 0) { slots[u] = (u32)sw; g_ld_bind_surf++; continue; }
-@@ -7611,10 +17367,11 @@
+@@ -7611,10 +17374,11 @@
              /* Mirror the replay-proven depth-RT contract: address and format
               * must match, and the pass must have executed a depth-writing draw.
               * Clear-only zetas intentionally fall through to guest VRAM. */
@@ -71863,7 +71934,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
                          (current_zslot != 1 + i || self_zeta_read)) {
                          if (zdepth_snapshot(1 + i))
                              sampled_depth = (int)i;
-@@ -7644,18 +17401,59 @@
+@@ -7644,18 +17408,59 @@
              if (sampled_depth >= 0) {
                  slots[u] = SRV_ZDEPTH_BASE + sampled_depth;
                  g_ld_zdepth_srv_binds++;
@@ -71926,7 +71997,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
      const u32 vtex_mask = vertex_texture_mask();
      u32 vtex_slots[SRV_TABLE_SIZE];
      for (u32 u = 0; u < SRV_TABLE_SIZE; u++)
-@@ -7675,7 +17473,7 @@
+@@ -7675,7 +17480,7 @@
              g_ld_vtex_unsupported++;
      }
      const u32 required_srv_tables = 1u + (vtex_mask != 0);
@@ -71935,7 +72006,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
          sampler_table_needs_flush(smp_slots)) {
          /* Every descriptor referenced by the old command list is consumed
           * before recycling its shader-visible heap entries. Texture upload
-@@ -7720,27 +17518,43 @@
+@@ -7720,27 +17525,43 @@
          }
      }
      {
@@ -71985,7 +72056,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
  
      const float W = sf.clip_w ? (float)sf.clip_w : (float)g.width;
      const float H = sf.clip_h ? (float)sf.clip_h : (float)g.height;
-@@ -7757,32 +17571,138 @@
+@@ -7757,32 +17578,138 @@
          xf[5] = -((vp.translate[1] - Hv * 0.5f) / (Hv * 0.5f));
          xf[6] = vp.translate[2];
      }
@@ -72145,7 +72216,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
      /* Guest scissor, intersected with the surface rect. The nv40 reset value
       * is a full-window 4096x4096; never-written regs read 0 here, so an
       * unwritten scissor means "no scissor". A WRITTEN zero width or height is
-@@ -7795,8 +17715,14 @@
+@@ -7795,8 +17722,14 @@
          const u32 sv = rsx_dsp_reg(&g.rsx, M_SCISSOR_VERTICAL);
          /* The scissor is in pixels too: scale it to the sample grid. */
          const LONG ax = (LONG)sf.aa_sx, ay = (LONG)sf.aa_sy;
@@ -72162,7 +72233,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
          const int written = g.rsx.seen[M_SCISSOR_HORIZONTAL >> 2] != 0 ||
                              g.rsx.seen[M_SCISSOR_VERTICAL >> 2] != 0;
          if (written) {
-@@ -7808,19 +17734,67 @@
+@@ -7808,19 +17741,67 @@
              if (sc.bottom < sc.top)      sc.bottom = sc.top;
          }
      }
@@ -72238,7 +72309,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
      {
          const u64 serial = ++g_ld_recent_draw_total;
          ld_recent_draw* draw =
-@@ -7850,28 +17824,64 @@
+@@ -7850,28 +17831,64 @@
          draw->clip_h = sf.clip_h;
          draw->srv_ring_used = g.srv_ring_used;
          draw->sampler_ring_used = g.smp_ring_used;
@@ -72311,7 +72382,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
          z->draws++;
          if (depth_state.depth_test) z->depth_test_draws++;
          if (depth_state.depth_write) z->depth_write_draws++;
-@@ -7880,8 +17890,12 @@
+@@ -7880,8 +17897,12 @@
          /* A write-enable bit alone does not prove that this draw produced a
           * usable depth map.  With depth testing disabled RSX does not execute
           * the depth pass represented by this tracked zeta. */
@@ -72325,7 +72396,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
      }
      g_ld_stats.groups_executed++;
  #if defined(YZ_PERF_PROFILE)
-@@ -7937,8 +17951,11 @@
+@@ -7937,8 +17958,11 @@
              fflush(stderr);
          }
      }
@@ -72337,7 +72408,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
      ld_profile_note_ring_highwater();
  }
  
-@@ -7947,15 +17964,93 @@
+@@ -7947,15 +17971,93 @@
  #if defined(YZ_PERF_PROFILE)
      const LONGLONG begin = ld_profile_qpc();
  #endif
@@ -72431,7 +72502,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
      if (g_ld_movie_mode && !ld_movie_composite_ui_enabled()) return;
      g_ld_stats.clears++;
      const u32 target = current_surface();
-@@ -7990,7 +18085,19 @@
+@@ -7990,7 +18092,19 @@
          fflush(s_csv_file);
      }
      D3D12_CPU_DESCRIPTOR_HANDLE rtv = rtv_handle(LD_SWAP_BUFFERS + target);
@@ -72451,7 +72522,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
          const u32 c = rsx_dsp_clear_color(&g.rsx);
          float col[4] = { ((c >> 16) & 0xFF) / 255.0f, ((c >> 8) & 0xFF) / 255.0f,
                           (c & 0xFF) / 255.0f, ((c >> 24) & 0xFF) / 255.0f };
-@@ -8005,14 +18112,30 @@
+@@ -8005,14 +18119,30 @@
          { static int ct = -1;
            if (ct < 0) ct = getenv("LD_CLEAR_TEST") ? 1 : 0;
            if (ct) { col[0] = 1.0f; col[1] = 0.0f; col[2] = 1.0f; col[3] = 1.0f; } }
@@ -72488,7 +72559,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
          D3D12_CPU_DESCRIPTOR_HANDLE dsv = dsv_handle(zslot);
          D3D12_CLEAR_FLAGS clear_flags = (D3D12_CLEAR_FLAGS)0;
          if (mask & RSX_CLEAR_DEPTH)
-@@ -8032,22 +18155,78 @@
+@@ -8032,22 +18162,78 @@
              const float cd = !zs ? 1.0f
                             : z16 ? (float)(zs & 0xFFFFu) / 65535.0f
                                   : (float)(zs >> 8) / 16777215.0f;
@@ -72571,7 +72642,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
          }
      }
  }
-@@ -8102,7 +18281,8 @@
+@@ -8102,7 +18288,8 @@
      xp[3].ShaderVisibility = D3D12_SHADER_VISIBILITY_VERTEX;
      xp[4].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
      xp[4].Descriptor.ShaderRegister = 1;
@@ -72581,7 +72652,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
      D3D12_STATIC_SAMPLER_DESC vsmp[RSX_DSP_NUM_VERTEX_TEXTURES] = {0};
      for (u32 i = 0; i < RSX_DSP_NUM_VERTEX_TEXTURES; i++) {
          vsmp[i].Filter = D3D12_FILTER_MIN_MAG_MIP_POINT;
-@@ -8220,11 +18400,184 @@
+@@ -8220,11 +18407,184 @@
      return SUCCEEDED(hr) ? 0 : -1;
  }
  
@@ -72766,7 +72837,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
      ld_present_measure_init();
  #if defined(YZ_PERF_PROFILE)
      memset(&g_ld_profile, 0, sizeof(g_ld_profile));
-@@ -8237,6 +18590,60 @@
+@@ -8237,6 +18597,60 @@
  #endif
      g.width = width; g.height = height;
      g.guest_ptr = guest_fn; g.guest_user = guest_user;
@@ -72827,7 +72898,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
      {
          const char* requested = getenv("RSX_FP_CONSTANT_MODE");
          char mode = 'B';
-@@ -8336,10 +18743,14 @@
+@@ -8336,10 +18750,14 @@
      g_ld_layout_cache_count = 0;
  
      ld_enable_debug_layer();
@@ -72844,7 +72915,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
          factory->lpVtbl->Release(factory); return -1;
      }
  #if defined(YZ_PERF_PROFILE)
-@@ -8356,25 +18767,48 @@
+@@ -8356,25 +18774,48 @@
      g.dev->lpVtbl->CreateCommandQueue(g.dev, &qd, &IID_ID3D12CommandQueue, (void**)&g.queue);
      g.dev->lpVtbl->CreateCommandAllocator(g.dev, D3D12_COMMAND_LIST_TYPE_DIRECT,
                                            &IID_ID3D12CommandAllocator, (void**)&g.alloc);
@@ -72894,7 +72965,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
      factory->lpVtbl->Release(factory);
  
      /* RTV heap: [0..1] backbuffers, [2..] surface cache */
-@@ -8385,8 +18819,14 @@
+@@ -8385,8 +18826,14 @@
      g.rtv_step = g.dev->lpVtbl->GetDescriptorHandleIncrementSize(g.dev, D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
      for (u32 i = 0; i < LD_SWAP_BUFFERS; i++) {
          g.swap->lpVtbl->GetBuffer(g.swap, i, &IID_ID3D12Resource, (void**)&g.backbuf[i]);
@@ -72911,7 +72982,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
  
      /* upload arena */
      D3D12_HEAP_PROPERTIES hp = {0}; hp.Type = D3D12_HEAP_TYPE_UPLOAD;
-@@ -8395,28 +18835,28 @@
+@@ -8395,28 +18842,28 @@
      bd.Height = 1; bd.DepthOrArraySize = 1; bd.MipLevels = 1;
      bd.Format = DXGI_FORMAT_UNKNOWN; bd.SampleDesc.Count = 1;
      bd.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
@@ -72945,7 +73016,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
          g.dev, &hp, D3D12_HEAP_FLAG_NONE, &bd,
          D3D12_RESOURCE_STATE_GENERIC_READ, NULL,
          &IID_ID3D12Resource, (void**)&g.ps_cb);
-@@ -8475,23 +18915,29 @@
+@@ -8475,23 +18922,29 @@
          drd.MipLevels = 1; drd.Format = DXGI_FORMAT_D32_FLOAT_S8X24_UINT; drd.SampleDesc.Count = 1;
          drd.Flags = D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
          D3D12_CLEAR_VALUE dcv = {0}; dcv.Format = drd.Format; dcv.DepthStencil.Depth = 1.0f;
@@ -72978,7 +73049,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
  
      /* dispatcher + sink */
      rsx_dispatch_sink sink = {0};
-@@ -8501,9 +18947,11 @@
+@@ -8501,9 +18954,11 @@
      sink.end = sink_end;
      sink.draw_arrays = sink_draw_arrays;
      sink.inline_array = sink_inline_array;
@@ -72990,7 +73061,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
  
      g.ready = 1;
      g.enabled = 1;
-@@ -8615,6 +19063,32 @@
+@@ -8615,6 +19070,32 @@
      rsx_dispatch_method(&g.rsx, method, arg);
  }
  
@@ -73023,7 +73094,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
  void rsx_live_draw_set_movie_mode(int on)
  {
      static unsigned long long suppressed_at_start = 0;
-@@ -8739,6 +19213,14 @@
+@@ -8739,6 +19220,14 @@
   * journal-consumer limp state renders ~0 draws/frame while flips tick). */
  u32 rsx_live_draw_get_last_draws(void) { return g_ld_last_frame_draws; }
  
@@ -73038,7 +73109,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
  double rsx_live_draw_get_present_fps(void)
  {
      const u64 total = g_ld_present_total;
-@@ -8811,6 +19293,8 @@
+@@ -8811,6 +19300,8 @@
      }
      if (w > g.width)  w = g.width;
      if (h > g.height) h = g.height;
@@ -73047,7 +73118,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
      const u32 pitch = (w * 4 + 255) & ~255u;          /* D3D12 copy pitch align */
      if ((UINT64)pitch * h > UPLOAD_SIZE) {
          if (serialized) {
-@@ -8853,6 +19337,7 @@
+@@ -8853,6 +19344,7 @@
          }
      }
  
@@ -73055,7 +73126,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
      const u32 bbi = g.swap->lpVtbl->GetCurrentBackBufferIndex(g.swap);
      ID3D12Resource* bb = g.backbuf[bbi];
  
-@@ -8883,6 +19368,7 @@
+@@ -8883,6 +19375,7 @@
      ld_flush(LD_FLUSH_MOVIE_PRESENT);
      {
          const HRESULT present_hr = g.swap->lpVtbl->Present(g.swap, 1, 0);
@@ -73063,7 +73134,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
          if (SUCCEEDED(present_hr))
              ld_present_measure_record(g_ld_frames);
          else {
-@@ -8929,12 +19415,165 @@
+@@ -8929,12 +19422,165 @@
   * through here while recording). */
  static FILE* g_ld_record_to;
  
@@ -73231,7 +73302,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
      if (!width || !height) return UINT64_MAX;
      const int fp16 = surface->fmt == DXGI_FORMAT_R16G16B16A16_FLOAT;
      const u32 texel = fp16 ? 8u : 4u;
-@@ -8948,7 +19587,7 @@
+@@ -8948,7 +19594,7 @@
      bd.Format = DXGI_FORMAT_UNKNOWN; bd.SampleDesc.Count = 1;
      bd.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
      ID3D12Resource* rb = NULL;
@@ -73240,7 +73311,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
              D3D12_RESOURCE_STATE_COPY_DEST, NULL, &IID_ID3D12Resource, (void**)&rb)))
          return UINT64_MAX;
  
-@@ -8968,7 +19607,9 @@
+@@ -8968,7 +19614,9 @@
      dst.PlacedFootprint.Footprint.Height = height;
      dst.PlacedFootprint.Footprint.Depth = 1;
      dst.PlacedFootprint.Footprint.RowPitch = pitch;
@@ -73251,7 +73322,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
  
      b.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_SOURCE;
      b.Transition.StateAfter = D3D12_RESOURCE_STATE_RENDER_TARGET;
-@@ -9024,6 +19665,2460 @@
+@@ -9024,6 +19672,2460 @@
      rb->lpVtbl->Release(rb);
      return nonblack;
  }
@@ -75712,7 +75783,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
  
  #if !defined(YZ_PERF_CLEAN)
  static void ld_parity_capture_surface(
-@@ -9199,9 +22294,425 @@
+@@ -9199,9 +22301,425 @@
      fflush(stderr);
  }
  
@@ -76139,7 +76210,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
  
      /* LD_SURF_DUMP=<dir>: dump EVERY live surface once, with its non-black
       * count, at LD_SURF_DUMP_FRAME (default 1200).
-@@ -9243,6 +22754,71 @@
+@@ -9243,6 +22761,71 @@
                        g.surfaces[i].last_clear_generation);
            }
        } }
@@ -76211,7 +76282,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
      /* LD_FRAME_DUMP=<dir> [+ LD_FRAME_DUMP_EVERY=<n>, default 300]: write the
       * PRESENTED surface to a .ppm every n flips. The engine could already dump
       * a surface, but only at shutdown or behind the parity harness -- neither
-@@ -9262,20 +22838,38 @@
+@@ -9262,20 +22845,38 @@
       * late scene, e.g. frames for a GIF, without thousands of early files). */
      static long dump_from = -1;
      if (dump_from < 0) { const char* e = getenv("LD_FRAME_DUMP_FROM"); dump_from = e ? atol(e) : 0; }
@@ -76255,7 +76326,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
          }
      }
      if (target == LD_INVALID_SURFACE && buffer_id < 8 &&
-@@ -9296,10 +22890,28 @@
+@@ -9296,10 +22897,28 @@
          return;
      }
      g_ld_last_present_target = target;
@@ -76284,7 +76355,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
          fprintf(stderr, "[frame-dump] %s %ux%u nonblack=%llu\n", path,
                  g.surfaces[target].w, g.surfaces[target].h,
                  (unsigned long long)(nb == UINT64_MAX ? 0 : nb));
-@@ -9334,6 +22946,10 @@
+@@ -9334,6 +22953,10 @@
        } }
      const u32 current = current_surface();
      surface_t* presented_surface = &g.surfaces[target];
@@ -76295,7 +76366,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
      /* LD_PRESENT_DBG=1: is this surface actually finished? A surface whose last
       * clear is NEWER than its last draw has been wiped and not redrawn -- that
       * presents as a black frame. Counting them separates "we present the wrong
-@@ -9399,10 +23015,158 @@
+@@ -9399,10 +23022,158 @@
            ld_trace_target("present", target, buffer_id);
            last_present_target = target;
        } }
@@ -76454,7 +76525,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
      D3D12_RESOURCE_BARRIER bar[2] = {0};
      bar[0].Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
      bar[0].Transition.pResource = srcimg;
-@@ -9416,17 +23180,47 @@
+@@ -9416,17 +23187,47 @@
      bar[1].Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_DEST;
      g.list->lpVtbl->ResourceBarrier(g.list, 2, bar);
  
@@ -76506,7 +76577,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
          if (SUCCEEDED(present_hr))
              ld_present_measure_record(g_ld_frames + 1u);
          else {
-@@ -9475,6 +23269,7 @@
+@@ -9475,6 +23276,7 @@
        g_ld_last_frame_draws = (u32)(g_ld_stats.packets_seen - packets_at_last_frame);
        packets_at_last_frame = g_ld_stats.packets_seen; }
      g_ld_frames++;
@@ -76514,7 +76585,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
  #if defined(YZ_PERF_PROFILE)
      ld_profile_present(g_ld_frames);
  #endif
-@@ -10153,6 +23948,30 @@
+@@ -10153,6 +23955,30 @@
                    } }
                  (void)hi; (void)rbase;
              } }
@@ -76545,7 +76616,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
            fprintf(stderr, "[fps] %.1f (frames %u..%u over %.1fs)\n",
                    (g_ld_frames - fps_f0) * 1000.0 / (double)(now - fps_t0),
                    fps_f0, g_ld_frames, (now - fps_t0) / 1000.0);
-@@ -10275,9 +24094,11 @@
+@@ -10275,9 +24101,11 @@
      }
  #endif
  
@@ -76560,7 +76631,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
  #if !defined(YZ_PERF_CLEAN)
      g_ld_frame_vertex_constant_ring_recycles = 0;
  #endif
-@@ -10297,6 +24118,7 @@
+@@ -10297,6 +24125,7 @@
      /* let the GPU drain, then release. (Best-effort; process teardown also
       * reclaims.) */
      ld_flush(LD_FLUSH_SHUTDOWN);
@@ -76568,7 +76639,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
  #if defined(YZ_PERF_PROFILE)
      fprintf(stderr,
              "[rsx-perf-summary] frames=%u "
-@@ -10498,7 +24320,10 @@
+@@ -10498,7 +24327,10 @@
                  (unsigned long long)g_ld_shader_disk_writes[1],
                  (unsigned long long)g_ld_shader_disk_rejects);
      }
@@ -76580,7 +76651,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
      shader_blob_cache_release(&g.vs_blobs);
      shader_blob_cache_release(&g.ps_blobs);
      for (u32 i = 0; i < g.n_textures; i++) if (g.textures[i].tex) g.textures[i].tex->lpVtbl->Release(g.textures[i].tex);
-@@ -10516,10 +24341,24 @@
+@@ -10516,10 +24348,24 @@
      if (g.movie_overlay_rgba) free(g.movie_overlay_rgba);
      if (g.movie_overlay_mask) free(g.movie_overlay_mask);
      if (g.white_tex) g.white_tex->lpVtbl->Release(g.white_tex);
@@ -76605,7 +76676,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
      for (u32 i = 0; i < 4; i++)
          if (g.downsample_pso[i]) g.downsample_pso[i]->lpVtbl->Release(g.downsample_pso[i]);
      if (g.downsample_rootsig)
-@@ -10527,6 +24366,13 @@
+@@ -10527,6 +24373,13 @@
      if (g.depth_snapshot_rootsig)
          g.depth_snapshot_rootsig->lpVtbl->Release(
              g.depth_snapshot_rootsig);
@@ -76619,7 +76690,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
      if (g.rootsig_x) g.rootsig_x->lpVtbl->Release(g.rootsig_x);
      if (g.swap) g.swap->lpVtbl->Release(g.swap);
      if (g_ld_info_queue) {
-@@ -10541,6 +24387,7 @@
+@@ -10541,6 +24394,7 @@
  #endif
      if (g.dev) g.dev->lpVtbl->Release(g.dev);
      memset(&g, 0, sizeof(g));
@@ -76627,7 +76698,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
      if (dc.verts) { free(dc.verts); dc.verts = NULL; dc.cap_verts = 0; }
      if (dc.refs) { free(dc.refs); dc.refs = NULL; dc.cap_refs = 0; }
      if (dc.compact_verts) {
-@@ -10552,3 +24399,38 @@
+@@ -10552,3 +24406,38 @@
  }
  
  #endif /* _WIN32 */
@@ -83454,3 +83525,95 @@ diff --git a/libs/input/cellPad.c b/libs/input/cellPad.c
 +        return CELL_PAD_ERROR_INVALID_PARAMETER;
 +    return handle;
 +}
+diff --git a/libs/system/cellUserInfo.c b/libs/system/cellUserInfo.c
+--- a/libs/system/cellUserInfo.c
++++ b/libs/system/cellUserInfo.c
+@@ -1,7 +1,8 @@
+ /*
+  * ps3recomp - cellUserInfo HLE implementation
+  *
+- * Reports a single default user (ID=00000001, name="User").
++ * Reports a single default user (ID=00000001), named "User" unless the player set
++ * PS3_USER_NAME (the launcher's Game page, or settings.bat).
+  */
+ 
+ #include "cellUserInfo.h"
+@@ -9,6 +10,7 @@
+ #include <string.h>
+ #include <stdint.h>
+ #include "../../runtime/ppu/ppu_memory.h"   /* vm_base (guest mem) */
++#include "gt5_settings.h"                    /* PS3_USER_NAME, read from settings.bat as UTF-8 */
+ /* HLE args arrive as guest effective addresses; translate before deref. */
+ #define GUEST_PTR(p, T) ((T)((p) ? (void*)(vm_base + (uint32_t)(uintptr_t)(p)) : (void*)0))
+ /* The guest is big-endian; u32 fields we write into guest structs must be stored
+@@ -28,6 +30,40 @@
+ 
+ static u32 s_selected_user = EMU_USER_ID;
+ 
++/* The player's name, what GT5 shows on GT Life and beside "Position" in a race: PS3_USER_NAME, else
++ * "User". Taken from settings.bat as UTF-8 by the settings registry (cmd's copy in the environment
++ * would be in the console's code page). Kept as a PS3 keeps it: at most 16 characters, no control
++ * characters, no spaces at either end; a broken UTF-8 sequence ends the name there. */
++size_t ps3_user_name(char* out, size_t cap)
++{
++    char raw[256];
++    size_t n = 0, chars = 0;
++    const unsigned char* s;
++    if (!out || cap == 0) return 0;
++    raw[0] = 0;
++    gt5_setting_str("PS3_USER_NAME", raw, sizeof raw);
++    s = (const unsigned char*)raw;
++    while (*s == ' ') s++;
++    while (*s && chars < 16) {
++        size_t len = *s < 0x80 ? 1 : (*s & 0xE0) == 0xC0 ? 2 : (*s & 0xF0) == 0xE0 ? 3 : (*s & 0xF8) == 0xF0 ? 4 : 0;
++        size_t k;
++        if (len == 0) break;
++        for (k = 1; k < len; k++) if ((s[k] & 0xC0) != 0x80) break;
++        if (k < len) break;
++        if (len == 1 && (*s < 0x20 || *s == 0x7F)) { s++; continue; }
++        if (n + len >= cap) break;
++        memcpy(out + n, s, len);
++        n += len; s += len; chars++;
++    }
++    while (n && out[n - 1] == ' ') n--;
++    if (n == 0) {
++        const char* d = EMU_USER_NAME;
++        while (d[n] && n + 1 < cap) { out[n] = d[n]; n++; }
++    }
++    out[n] = 0;
++    return n;
++}
++
+ /* ---------------------------------------------------------------------------
+  * API implementations
+  * -----------------------------------------------------------------------*/
+@@ -45,7 +81,7 @@
+      * overflows the guest's stack buffer (see header comment). */
+     memset(stat, 0, sizeof(CellUserInfoUserStat));
+     stat->id = BE32(EMU_USER_ID);
+-    strncpy(stat->name, EMU_USER_NAME, CELL_USERINFO_USERNAME_SIZE - 1);
++    ps3_user_name(stat->name, CELL_USERINFO_USERNAME_SIZE);
+ 
+     return CELL_OK;
+ }
+diff --git a/libs/system/cellUserInfo.h b/libs/system/cellUserInfo.h
+--- a/libs/system/cellUserInfo.h
++++ b/libs/system/cellUserInfo.h
+@@ -9,6 +9,7 @@
+ 
+ #include "ps3emu/ps3types.h"
+ #include "ps3emu/error_codes.h"
++#include <stddef.h>
+ 
+ #ifdef __cplusplus
+ extern "C" {
+@@ -81,6 +82,9 @@
+ s32 cellUserInfoEnableOverlay(s32 enable);
+ s32 cellUserInfoGetHomeDir(u32 id, char* homePath, u32 homePathSize);
+ 
++/* The player's name as UTF-8 (PS3_USER_NAME, else "User"), at most 16 characters; returns its length. */
++size_t ps3_user_name(char* out, size_t cap);
++
+ #ifdef __cplusplus
+ }
+ #endif
