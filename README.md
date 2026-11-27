@@ -76,7 +76,7 @@ something does. Nothing is installed into Windows. It downloads this code and, i
 its own copies of Git (38 MB, only when the PC has none), Python (17 MB) and the compiler tools
 (about 1.5 GB, into the install folder: **no Visual Studio is installed or changed**), unlocks your game's executable (with the port's own small tool; RPCS3 is not used:
 the game itself runs natively as `gt5.exe`, not in an emulator), builds the game (about an hour the
-first time) with both renderers (DirectX 12 and Vulkan), adds AMD FSR 3 frame generation and, on a PC with
+first time) with both renderers (DirectX 12 and Vulkan), adds AMD FSR (frame generation and anti-aliasing) and, on a PC with
 an NVIDIA RTX card, NVIDIA DLSS, and puts **Gran Turismo 5 (PC)** on your desktop, which opens the
 [launcher](#launcher). Nothing from the game is ever uploaded or shared. Some of what it downloads comes
 under another company's licence (Microsoft's C++ libraries in the compiler tools, when it fetches those;
@@ -95,7 +95,7 @@ Rather do it by hand? See [Setup](#setup). On Linux? See [Linux](#linux).
 **Gran Turismo 5 (PC)** on your desktop (or `GT5Launcher.exe` in your `gt5-recomp` folder) opens the
 launcher: every setting in one window, then **Play**. No more editing `play.bat`.
 
-- **Display:** the renderer, resolution, anti-aliasing (NVIDIA DLSS, on an RTX card), shadows, frame
+- **Display:** the renderer, resolution, anti-aliasing (AMD FSR on any card, NVIDIA DLSS on an RTX card), shadows, frame
   generation, **borderless full screen** (the default), a maximized window or a window size, screen shape
   (ultrawide), the frame rate (60 or 30 fps) and [asynchronous shader loading](#shaders). The rows say
   what the game's own menu says; a row that
@@ -560,7 +560,7 @@ and spreads it sideways. Rendering above the PS3's resolutions is on the list.
 **A: Yes: the [launcher](#launcher)'s Display > Renderer.** DirectX 12 is the port's main renderer and stays
 the default. Vulkan is the renderer the Linux build and the Android work use. On Windows it's slower for
 now (see the numbers in [CHANGELOG.md](CHANGELOG.md), 15 Nov), some effects may look different, and some
-settings do nothing with it yet (render resolution, DLSS, the frame generator and multiplier, texture dumps:
+settings do nothing with it yet (render resolution, DLSS and FSR anti-aliasing, the frame generator and multiplier, texture dumps:
 the launcher greys them while Vulkan is chosen). The game is built with both renderers: setup (so the
 installer) fetches the source code of SDL2 and glslang (about 60 MB, from GitHub, checked against the exact
 releases) and builds them before the game's first build, and an update does the same for an install made

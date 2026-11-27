@@ -134,6 +134,7 @@ performance matters more than the graphics card.
 
 The last few days; the full history since 1 November is in [CHANGELOG.md](CHANGELOG.md).
 
+- **27 Nov 2026 (later):** **AMD FSR anti-aliasing** on any graphics card with DirectX 12: *FSR: Native AA* and the Quality / Balanced / Performance upscaling modes, next to DLSS (v0.1.121; tried on an NVIDIA card only).
 - **27 Nov 2026:** *Throttle and brake* on the triggers works on the 2.xx game updates too (they number pads one higher than 1.00; the port now reads the numbers from the game) (v0.1.120; #60).
 - **26 Nov 2026 (later):** cockpit screens show their numbers instead of white boxes on DirectX 12 (a texture format the renderer had no case for; seen on the McLaren MP4-12C here, Ferrari 599 and Enzo in a player's pictures), and a **Player name** box on the launcher's Game page replaces "User" in GT Life and races (v0.1.119).
 - **26 Nov 2026:** a wheel without a clutch pedal no longer drops a manual car into neutral under hard braking (the Driving Force Pro gets its own pedal layout); test builds sit next to **Update now** in the launcher, each with its own notes (also a pre-release on GitHub and a post in the Discord's new #gt5-test-builds) (v0.1.118; not tried with a real wheel here).

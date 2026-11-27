@@ -326,6 +326,10 @@ namespace Gt5Launcher
             { "aa.p", new[] { "DLSS: Performance", "DLSS：性能" } },
             { "aa.u", new[] { "DLSS: Ultra Performance", "DLSS：超级性能" } },
             { "aa.c", new[] { "DLSS: custom scale", "DLSS：自定义比例" } },
+            { "aa.fsr_aa", new[] { "FSR: Native AA", "FSR：原生抗锯齿" } },
+            { "aa.fsr_q", new[] { "FSR: Quality", "FSR：质量" } },
+            { "aa.fsr_b", new[] { "FSR: Balanced", "FSR：平衡" } },
+            { "aa.fsr_p", new[] { "FSR: Performance", "FSR：性能" } },
             { "shadows", new[] { "Shadows", "阴影" } },
             { "shadows.standard", new[] { "Standard", "标准" } },
             { "shadows.high", new[] { "High", "高" } },
@@ -383,12 +387,12 @@ namespace Gt5Launcher
             { "vsync.off", new[] { "Off", "关" } },
             // The AMD FSR 3 row (an add-on, like NVIDIA DLSS).
             { "fsr.name", new[] { "AMD FSR 3", "AMD FSR 3" } },
-            { "fsr.note", new[] { "From AMD, about 20 MB.", "来自 AMD，约 20 MB。" } },
+            { "fsr.note", new[] { "From AMD, about 70 MB.", "来自 AMD，约 70 MB。" } },
             { "fsr.note.added", new[] { "", "" } },
             { "fsr.title.add", new[] { "Adding AMD FSR 3", "正在添加 AMD FSR 3" } },
             { "fsr.title.remove", new[] { "Removing AMD FSR 3", "正在移除 AMD FSR 3" } },
             { "fsr.ask.remove", new[] { "Remove AMD FSR 3?", "移除 AMD FSR 3？" } },
-            { "fsr.ask.remove.text", new[] { "Frame generation will use another generator. You can add it again any time.", "帧生成将改用其他生成器。之后可随时再次添加。" } },
+            { "fsr.ask.remove.text", new[] { "Frame generation will use another generator, and FSR anti-aliasing goes off. You can add it again any time.", "帧生成将改用其他生成器，FSR 抗锯齿也会关闭。之后可随时再次添加。" } },
             { "fsr.added", new[] { "AMD FSR 3 is ready.", "AMD FSR 3 已就绪。" } },
             { "fsr.notadded", new[] { "AMD FSR 3 wasn't added.", "未添加 AMD FSR 3。" } },
             { "fsr.removed", new[] { "AMD FSR 3 is removed.", "已移除 AMD FSR 3。" } },
@@ -2705,7 +2709,8 @@ namespace Gt5Launcher
         {
             bool changed = false;
             // Settings this PC's graphics card can't use, from another PC or an older launcher: back to their default.
-            if (!Gpu.Rtx && S.Get("LD_AA") != "") { S.Set("LD_AA", ""); changed = true; }
+            // (DLSS's modes only: AMD FSR's run on any card.)
+            if (!Gpu.Rtx && S.Get("LD_AA").StartsWith("dl", StringComparison.OrdinalIgnoreCase)) { S.Set("LD_AA", ""); changed = true; }
             if (S.Get("LD_FG_METHOD") == "dlss" && !(Gpu.Rtx && Gpu.RtxFrameGen)) { S.Set("LD_FG_METHOD", ""); changed = true; }
             // One Resolution. The game is always told 1080p (its mode with the sharp HUD) and the renderer scales from
             // there; an older "720p mode" setting becomes the 720p choice.
@@ -3368,16 +3373,25 @@ namespace Gt5Launcher
             // The rows in the game's order (its Display page, then its Performance page's Frame rate). One Resolution:
             // the game is always told 1080p (its mode with the sharp HUD) and the renderer scales from there.
             y = AddCombo(p, "res", null, "LD_RES_TARGET", new[] { new Choice("720", "720p"), new Choice("", "1080p"), new Choice("1440", "1440p"), new Choice("2160", "4K"), new Choice("2880", "5K") }, y);
-            // Anti-aliasing (NVIDIA DLSS), on a PC with an NVIDIA RTX card only. It never asks: without the add-on its
-            // modes are greyed, and the row under it adds it. (The game's other entries can't be picked anywhere yet.)
+            // Anti-aliasing: NVIDIA DLSS on a PC with an NVIDIA RTX card, AMD FSR on any (both DirectX 12). It never
+            // asks: without its add-on a mode is greyed; the row under it adds DLSS, the Generator row's adds FSR.
+            // (The game's other entries can't be picked anywhere yet.)
             var dlss = addons.Find(delegate (Addon a) { return a.Id == "dlss"; });
+            var fsr = addons.Find(delegate (Addon a) { return a.Id == "fsr"; });
+            var aas = new List<Choice> { new Choice("", T.Get("aa.off")) };
             if (dlss != null)
             {
-                y = AddCombo(p, "aa", null, "LD_AA", new[] { new Choice("", T.Get("aa.off")), new Choice("dlss_q", T.Get("aa.q")) { Needs = dlss },
-                    new Choice("dlss_b", T.Get("aa.b")) { Needs = dlss }, new Choice("dlss_p", T.Get("aa.p")) { Needs = dlss }, new Choice("dlss_u", T.Get("aa.u")) { Needs = dlss },
-                    new Choice("dlaa", T.Get("aa.dlaa")) { Needs = dlss } }, y);
-                y = AddAddonRow(p, dlss, y);   // part of the Anti-aliasing row (Addon.ForKey)
+                aas.Add(new Choice("dlss_q", T.Get("aa.q")) { Needs = dlss }); aas.Add(new Choice("dlss_b", T.Get("aa.b")) { Needs = dlss });
+                aas.Add(new Choice("dlss_p", T.Get("aa.p")) { Needs = dlss }); aas.Add(new Choice("dlss_u", T.Get("aa.u")) { Needs = dlss });
+                aas.Add(new Choice("dlaa", T.Get("aa.dlaa")) { Needs = dlss });
             }
+            if (fsr != null)
+            {
+                aas.Add(new Choice("fsr_q", T.Get("aa.fsr_q")) { Needs = fsr }); aas.Add(new Choice("fsr_b", T.Get("aa.fsr_b")) { Needs = fsr });
+                aas.Add(new Choice("fsr_p", T.Get("aa.fsr_p")) { Needs = fsr }); aas.Add(new Choice("fsr_aa", T.Get("aa.fsr_aa")) { Needs = fsr });
+            }
+            y = AddCombo(p, "aa", null, "LD_AA", aas.ToArray(), y);
+            if (dlss != null) y = AddAddonRow(p, dlss, y);   // part of the Anti-aliasing row (Addon.ForKey)
             // Shadows: DirectX 12 draws the sun's shadow map at 2x (High, the default) or 4x with soft edges.
             y = AddCombo(p, "shadows", null, "LD_SHADOWS", new[] { new Choice("standard", T.Get("shadows.standard")), new Choice("", T.Get("shadows.high")), new Choice("ultra", T.Get("shadows.ultra")) }, y);
             // New shaders: wait for them, or build them in the background (DirectX 12; Vulkan always builds in the background).
@@ -3387,7 +3401,6 @@ namespace Gt5Launcher
             p.VisibleChanged += delegate { if (p.Visible) RefreshAddons(); };
             // Frame generation, as in the game's menu: one switch; the generator (automatic unless one is named;
             // NVIDIA's and AMD's each need their add-on) and the multiplier only while it is on.
-            var fsr = addons.Find(delegate (Addon a) { return a.Id == "fsr"; });
             y = AddCombo(p, "framegen", null, "LD_FRAMEGEN", new[] { new Choice("", T.Get("fg.off")), new Choice("1", T.Get("fg.on")) }, y);
             // NVIDIA's generator only on a card that runs it (an RTX 40 series or newer).
             var gens = new List<Choice> { new Choice("", T.Get("fgmethod.auto")) };
@@ -4115,13 +4128,14 @@ namespace Gt5Launcher
                 FirstKey = "dlss.first", Log = "add_dlss",
                 WatchPath = Path.Combine(P.Gt5, "deps", "dlss", "DLSS", ".git"), CleanOnStop = Path.Combine(P.Gt5, "deps", "dlss"),
             });
-            // AMD FSR 3 (frame generation): add_fsr.ps1 fetches AMD's FidelityFX SDK at a fixed release, checks its
-            // two DLLs and builds the small plug-in. No licence to accept.
+            // AMD FSR (frame generation, and anti-aliasing with DirectX 12): add_fsr.ps1 fetches AMD's FidelityFX SDK at
+            // a fixed release, checks its DLLs and builds the small plug-in. No licence to accept.
             list.Add(new Addon
             {
                 Id = "fsr", ForKey = "LD_FG_METHOD", NameKey = "fsr.name", NoteKey = "fsr.note", NoteAddedKey = "fsr.note.added", Link = null,
                 Script = Path.Combine(scripts, "add_fsr.ps1"), AddArgs = new[] { "-NoPause" }, RemoveArgs = new[] { "-Remove", "-NoPause" },
-                Files = new[] { Path.Combine(build, "gt5_upscale_fsr.dll"), Path.Combine(build, "amd_fidelityfx_loader_dx12.dll"), Path.Combine(build, "amd_fidelityfx_framegeneration_dx12.dll") },
+                Files = new[] { Path.Combine(build, "gt5_upscale_fsr.dll"), Path.Combine(build, "amd_fidelityfx_loader_dx12.dll"), Path.Combine(build, "amd_fidelityfx_framegeneration_dx12.dll"),
+                                 Path.Combine(build, "amd_fidelityfx_upscaler_dx12.dll") },
                 AddTitleKey = "fsr.title.add", RemoveTitleKey = "fsr.title.remove", RemoveAskKey = "fsr.ask.remove", RemoveTextKey = "fsr.ask.remove.text",
                 AddedKey = "fsr.added", NotAddedKey = "fsr.notadded", RemovedKey = "fsr.removed", NotRemovedKey = "fsr.notremoved",
                 FirstKey = "fsr.first", Log = "add_fsr",

@@ -9,6 +9,13 @@ release on the tested rig in [STATUS.md](STATUS.md) unless a day says otherwise.
 
 ## 27 Nov 2026
 
+🏷️ Released as **v0.1.121**
+
+✨ **AMD FSR anti-aliasing, on any graphics card** (asked for by Arpadiam)
+- **Anti-aliasing** (in-game menu F1 > Display, and the launcher's Display page) now offers AMD's FSR next to NVIDIA's DLSS: **FSR: Native AA** smooths the edges at the picture's own size (a temporal anti-aliasing, like DLAA), and **FSR: Quality / Balanced / Performance** draw the 3D picture smaller and rebuild it, for more speed. It runs on AMD, NVIDIA and Intel cards with DirectX 12; with Vulkan the FSR modes stay greyed.
+- It is AMD's FSR 3.1 upscaler, from AMD's own files: the FSR add-on that frame generation already uses fetches it, so the next update downloads about 34 MB more, once. Until it is there the FSR modes are greyed, with a line saying so. As with DLSS, races and the other 3D screens get it; menus are shown as drawn.
+- Checked here on an NVIDIA card (European disc, High Speed Ring): Native AA and Quality, before-and-after pictures of the same frames: the stair steps on the kerb marks and lines are gone, nothing else changed; the call takes about 0.1 ms of the processor. Moving cars are a little softer, as with any temporal anti-aliasing. Not tried on an AMD or Intel card.
+
 🏷️ Released as **v0.1.120**
 
 🎮 **Triggers as throttle and brake now work on the game updates (2.00 and later)** (thanks StefMel, [#60](https://github.com/MormonFTP-hub/gt5-recomp/issues/60))

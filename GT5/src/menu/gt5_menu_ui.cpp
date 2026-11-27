@@ -423,13 +423,13 @@ void status_line(const gt5_setting_def* d, bool unavailable, const char* idle, f
     if (!gt5_settings_find(d->key)) return;   // [freecam] the menu's own rows apply at once: nothing to say
     gt5_menu_stats st;
     const bool have = stats_get(&st);
-    // The anti-aliasing row says what the renderer says: why DLSS can't be used here (no plug-in, the
-    // graphics card, the driver), or what it is doing right now.
+    // The anti-aliasing row says what the renderer says: why the upscaler picked can't be used here (no
+    // plug-in, the graphics card, the driver), or what it is doing right now.
     const bool aa_row = !strcmp(d->key, "LD_AA") && have && st.aa_state[0];
     const char* text = nullptr;
     const char* text2 = nullptr;
     ImVec4 col = kDim;
-    if (unavailable && aa_row) { text = st.aa_state; col = kNext; text2 = T("add NVIDIA DLSS in the launcher first", "请先在启动器中添加 NVIDIA DLSS"); }
+    if (unavailable && aa_row) { text = st.aa_state; col = kNext; text2 = T("add NVIDIA DLSS or AMD FSR in the launcher first", "请先在启动器中添加 NVIDIA DLSS 或 AMD FSR"); }
     else if (unavailable) text = T("not in this version yet", "此版本尚不可用");
     else if (idle) text = idle;
     else if (!strcmp(d->key, "LD_FRAMEGEN") && have && st.fg_state[0]) { text = st.fg_state; col = kLive; }   // what is made and shown now, or why not

@@ -1,12 +1,16 @@
-// upscale_fsr.cpp - gt5_upscale_fsr.dll: AMD FSR 3 frame generation behind gt5_upscale.h (the fg_ calls of
-// interface version 2). No upscaler in this plug-in yet: its upscaler calls are NULL.
+// upscale_fsr.cpp - gt5_upscale_fsr.dll: AMD FSR behind gt5_upscale.h: the upscaler (anti-aliasing at the
+// picture's own size, "Native AA", or the picture drawn smaller and rebuilt; Direct3D 12 only) and FSR 3
+// frame generation (the fg_ calls of interface version 2, Direct3D 12 and Vulkan).
 //
 // This file is the project's own; what it includes (ffx_api.h, ffx_api_types.h, dx12/ffx_api_dx12.h,
-// ffx_framegeneration.h: AMD's, MIT licence) and loads at run time (amd_fidelityfx_loader_dx12.dll and
-// amd_fidelityfx_framegeneration_dx12.dll: AMD's, signed) is AMD's FSR SDK, which is NOT part of the
-// project: scripts\add_fsr.ps1 fetches it from AMD's repository on the player's PC and builds this DLL
-// there. AMD's two DLLs sit next to it. The game loads gt5_upscale_fsr.dll if it is there and never
-// needs it. Nothing of AMD's is linked: the five ffx functions are taken from the loader DLL by name.
+// ffx_framegeneration.h, ffx_upscale.h: AMD's, MIT licence) and loads at run time
+// (amd_fidelityfx_loader_dx12.dll, amd_fidelityfx_framegeneration_dx12.dll, amd_fidelityfx_upscaler_dx12.dll:
+// AMD's, signed) is AMD's FSR SDK, which is NOT part of the project: scripts\add_fsr.ps1 fetches it from
+// AMD's repository on the player's PC and builds this DLL there. AMD's DLLs sit next to it. The game loads
+// gt5_upscale_fsr.dll if it is there and never needs it. Nothing of AMD's is linked: the five ffx functions
+// are taken from the loader DLL by name. Each effect is offered only when its own DLL is there and AMD's:
+// an install whose add-on predates the upscaler (no amd_fidelityfx_upscaler_dx12.dll) keeps its frame
+// generation, and the upscaler's choices stay greyed with a line saying how to get it.
 //
 // The generator is driven WITHOUT AMD's swap chain: ffxConfigure with no swap chain and
 // FFX_FRAMEGENERATION_FLAG_NO_SWAPCHAIN_CONTEXT_NOTIFY, then the prepare and the generation dispatch on
@@ -35,6 +39,7 @@
 #include "ffx_api.h"
 #include "dx12/ffx_api_dx12.h"
 #include "ffx_framegeneration.h"
+#include "ffx_upscale.h"
 
 #include "gt5_upscale.h"
 
@@ -48,9 +53,15 @@ PfnFfxDispatch fDispatch;
 
 HMODULE s_loader;
 ID3D12Device* s_device;
+bool s_started;                // fsr_start ran (once: AMD's DLLs stay loaded)
 bool s_loaded;                 // AMD's DLL is in and offers a frame generator for this card
 char s_error[240];
 char s_why[200];               // why it is not available, for fg_caps
+bool s_up_loaded;              // ... and an upscaler
+char s_up_why[200];            // why the upscaler is not available, for init's caps
+char s_up_version[48];         // the upscaler in use, as AMD names it
+uint64_t s_up_version_id;
+bool s_up_pinned;
 char s_version[48];            // the generator in use, as AMD names it
 uint64_t s_version_id;         // its id, when it is pinned
 bool s_pinned;
@@ -109,10 +120,10 @@ bool signed_by_amd(const wchar_t* path)
     return ok;
 }
 
-// The folder AMD's two DLLs are in: this DLL's own, or GT5_FSR_DIR (tests).
+// The folder AMD's loader is in (and the effects' DLLs beside it): this DLL's own, or GT5_FSR_DIR (tests).
 bool find_dir(wchar_t* out)
 {
-    static const wchar_t* need[2] = { L"amd_fidelityfx_loader_dx12.dll", L"amd_fidelityfx_framegeneration_dx12.dll" };
+    static const wchar_t* need[1] = { L"amd_fidelityfx_loader_dx12.dll" };
     wchar_t dirs[2][MAX_PATH] = { L"", L"" };
     HMODULE self = nullptr;
     if (GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
@@ -137,57 +148,15 @@ bool find_dir(wchar_t* out)
     return false;
 }
 
-int fsr_init(ID3D12Device* device, const wchar_t* dir, gt5_upscale_caps* caps)
+// Which versions of one effect AMD's DLLs offer on this card, and which one this plug-in takes: the first
+// whose name starts with `env`'s text (default `pin`), or AMD's own choice (the first listed) with
+// env=auto or when none matches. false: none offered (why says so).
+bool pick_version(ID3D12Device* device, uint64_t desc_type, const char* what, const char* env, const char* pin,
+                  char* version, size_t version_size, uint64_t* id, bool* pinned, char* why, size_t why_size)
 {
-    (void)dir;
-    memset(caps, 0, sizeof *caps);
-    snprintf(caps->name, sizeof caps->name, "AMD FSR 3");
-    snprintf(caps->message, sizeof caps->message, "this plug-in makes frames only; it has no upscaler yet");
-    s_error[0] = 0; s_why[0] = 0;
-    if (!device) { snprintf(s_why, sizeof s_why, "no Direct3D 12 device"); return 0; }
-    s_device = device;              // (again after a shutdown: AMD's DLLs stay loaded, the device may be new)
-    if (s_loaded) return 1;
-    { char e[8] = ""; s_debug = GetEnvironmentVariableA("GT5_FSR_DEBUG", e, sizeof e) && e[0] && e[0] != '0'; }
-
-    wchar_t where[MAX_PATH], path[MAX_PATH + 64];
-    if (!find_dir(where)) {
-        snprintf(s_why, sizeof s_why, "AMD's FSR files are not installed: run \"Get AMD FSR 3\" in the launcher");
-        return 1;
-    }
-    static const wchar_t* files[2] = { L"amd_fidelityfx_framegeneration_dx12.dll", L"amd_fidelityfx_loader_dx12.dll" };
-    for (const wchar_t* f : files) {
-        _snwprintf(path, MAX_PATH + 64, L"%ls\\%ls", where, f);
-        path[MAX_PATH + 63] = 0;
-        if (!signed_by_amd(path)) {
-            snprintf(s_why, sizeof s_why, "%ls is not signed by AMD: run \"Get AMD FSR 3\" in the launcher again", f);
-            return 1;
-        }
-    }
-    // the loader (the last one checked); it finds the effect DLL in the game's folder or in its own
-    s_loader = LoadLibraryExW(path, nullptr, LOAD_WITH_ALTERED_SEARCH_PATH);
-    if (!s_loader) {
-        snprintf(s_why, sizeof s_why, "AMD's FSR loader could not be loaded (Windows error %lu)", GetLastError());
-        return 1;
-    }
-    fCreate = (PfnFfxCreateContext)(void*)GetProcAddress(s_loader, "ffxCreateContext");
-    fDestroy = (PfnFfxDestroyContext)(void*)GetProcAddress(s_loader, "ffxDestroyContext");
-    fConfigure = (PfnFfxConfigure)(void*)GetProcAddress(s_loader, "ffxConfigure");
-    fQuery = (PfnFfxQuery)(void*)GetProcAddress(s_loader, "ffxQuery");
-    fDispatch = (PfnFfxDispatch)(void*)GetProcAddress(s_loader, "ffxDispatch");
-    if (!fCreate || !fDestroy || !fConfigure || !fQuery || !fDispatch) {
-        snprintf(s_why, sizeof s_why, "AMD's FSR loader is not the expected one (its functions are missing)");
-        return 1;
-    }
-    // FSR 3 needs typed loads from unordered-access textures of more formats than every card has.
-    D3D12_FEATURE_DATA_D3D12_OPTIONS o = {};
-    if (FAILED(device->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS, &o, sizeof o)) || !o.TypedUAVLoadAdditionalFormats) {
-        snprintf(s_why, sizeof s_why, "this graphics card cannot run AMD FSR 3 frame generation (no typed unordered-access loads)");
-        return 1;
-    }
-    // Which generators AMD's DLL offers on this card, and which one this plug-in takes.
     ffxQueryDescGetVersions q = {};
     q.header.type = FFX_API_QUERY_DESC_TYPE_GET_VERSIONS;
-    q.createDescType = FFX_API_CREATE_CONTEXT_DESC_TYPE_FRAMEGENERATION; q.device = device;
+    q.createDescType = desc_type; q.device = device;
     uint64_t n = 0; q.outputCount = &n;
     ffxReturnCode_t rc = fQuery(nullptr, &q.header);
     uint64_t ids[16]; const char* names[16];
@@ -197,23 +166,106 @@ int fsr_init(ID3D12Device* device, const wchar_t* dir, gt5_upscale_caps* caps)
         rc = fQuery(nullptr, &q.header);
     }
     if (rc != FFX_API_RETURN_OK || !n) {
-        snprintf(s_why, sizeof s_why, "AMD's FSR files offer no frame generation for this graphics card (%u: %s)", (unsigned)rc, rc_name(rc));
-        return 1;
+        snprintf(why, why_size, "AMD's FSR files offer no %s for this graphics card (%u: %s)", what, (unsigned)rc, rc_name(rc));
+        return false;
     }
     char want[32] = "";
-    if (!GetEnvironmentVariableA("GT5_FSR_FG_VERSION", want, sizeof want) || !want[0]) snprintf(want, sizeof want, "3.1");
-    s_pinned = false;
+    if (!GetEnvironmentVariableA(env, want, sizeof want) || !want[0]) snprintf(want, sizeof want, "%s", pin);
+    *pinned = false;
     if (_stricmp(want, "auto") != 0)
-        for (uint64_t i = 0; i < n && !s_pinned; i++)
+        for (uint64_t i = 0; i < n && !*pinned; i++)
             if (names[i] && !strncmp(names[i], want, strlen(want))) {
-                s_pinned = true; s_version_id = ids[i];
-                snprintf(s_version, sizeof s_version, "%s", names[i]);
+                *pinned = true; *id = ids[i];
+                snprintf(version, version_size, "%s", names[i]);
             }
-    if (!s_pinned) snprintf(s_version, sizeof s_version, "%s", names[0] ? names[0] : "?");   // AMD's own choice: the first listed
-    fprintf(stderr, "[fsr] AMD's frame generators for this card:");
+    if (!*pinned) snprintf(version, version_size, "%s", names[0] ? names[0] : "?");
+    fprintf(stderr, "[fsr] AMD's %s versions for this card:", what);
     for (uint64_t i = 0; i < n; i++) fprintf(stderr, " %s", names[i] ? names[i] : "?");
-    fprintf(stderr, "; using %s%s\n", s_version, s_pinned ? " (pinned)" : " (AMD's choice)");
-    s_loaded = true;
+    fprintf(stderr, "; using %s%s\n", version, *pinned ? " (pinned)" : " (AMD's choice)");
+    return true;
+}
+
+// Once (AMD's DLLs stay loaded): the loader, then each effect whose DLL is there and AMD's. s_why / s_up_why
+// say why an effect is not to be had.
+void fsr_start(ID3D12Device* device)
+{
+    { char e[8] = ""; s_debug = GetEnvironmentVariableA("GT5_FSR_DEBUG", e, sizeof e) && e[0] && e[0] != '0'; }
+    snprintf(s_up_why, sizeof s_up_why, "AMD FSR did not start");
+    wchar_t where[MAX_PATH], path[MAX_PATH + 64];
+    if (!find_dir(where)) {
+        snprintf(s_why, sizeof s_why, "AMD's FSR files are not installed: run \"Get AMD FSR 3\" in the launcher");
+        snprintf(s_up_why, sizeof s_up_why, "%s", s_why);
+        return;
+    }
+    _snwprintf(path, MAX_PATH + 64, L"%ls\\amd_fidelityfx_loader_dx12.dll", where);
+    path[MAX_PATH + 63] = 0;
+    if (!signed_by_amd(path)) {
+        snprintf(s_why, sizeof s_why, "amd_fidelityfx_loader_dx12.dll is not signed by AMD: run \"Get AMD FSR 3\" in the launcher again");
+        snprintf(s_up_why, sizeof s_up_why, "%s", s_why);
+        return;
+    }
+    // the loader; it finds the effects' DLLs in the game's folder or in its own
+    s_loader = LoadLibraryExW(path, nullptr, LOAD_WITH_ALTERED_SEARCH_PATH);
+    if (!s_loader) {
+        snprintf(s_why, sizeof s_why, "AMD's FSR loader could not be loaded (Windows error %lu)", GetLastError());
+        snprintf(s_up_why, sizeof s_up_why, "%s", s_why);
+        return;
+    }
+    fCreate = (PfnFfxCreateContext)(void*)GetProcAddress(s_loader, "ffxCreateContext");
+    fDestroy = (PfnFfxDestroyContext)(void*)GetProcAddress(s_loader, "ffxDestroyContext");
+    fConfigure = (PfnFfxConfigure)(void*)GetProcAddress(s_loader, "ffxConfigure");
+    fQuery = (PfnFfxQuery)(void*)GetProcAddress(s_loader, "ffxQuery");
+    fDispatch = (PfnFfxDispatch)(void*)GetProcAddress(s_loader, "ffxDispatch");
+    if (!fCreate || !fDestroy || !fConfigure || !fQuery || !fDispatch) {
+        snprintf(s_why, sizeof s_why, "AMD's FSR loader is not the expected one (its functions are missing)");
+        snprintf(s_up_why, sizeof s_up_why, "%s", s_why);
+        return;
+    }
+    // FSR needs typed loads from unordered-access textures of more formats than every card has.
+    D3D12_FEATURE_DATA_D3D12_OPTIONS o = {};
+    if (FAILED(device->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS, &o, sizeof o)) || !o.TypedUAVLoadAdditionalFormats) {
+        snprintf(s_why, sizeof s_why, "this graphics card cannot run AMD FSR (no typed unordered-access loads)");
+        snprintf(s_up_why, sizeof s_up_why, "%s", s_why);
+        return;
+    }
+    // frame generation: its DLL, AMD's; 3.1 pinned (see the top)
+    _snwprintf(path, MAX_PATH + 64, L"%ls\\amd_fidelityfx_framegeneration_dx12.dll", where);
+    path[MAX_PATH + 63] = 0;
+    if (GetFileAttributesW(path) == INVALID_FILE_ATTRIBUTES)
+        snprintf(s_why, sizeof s_why, "AMD's FSR frame generation is not installed: run \"Get AMD FSR 3\" in the launcher");
+    else if (!signed_by_amd(path))
+        snprintf(s_why, sizeof s_why, "amd_fidelityfx_framegeneration_dx12.dll is not signed by AMD: run \"Get AMD FSR 3\" in the launcher again");
+    else
+        s_loaded = pick_version(device, FFX_API_CREATE_CONTEXT_DESC_TYPE_FRAMEGENERATION, "frame generation", "GT5_FSR_FG_VERSION",
+                                "3.1", s_version, sizeof s_version, &s_version_id, &s_pinned, s_why, sizeof s_why);
+    // the upscaler: its DLL, AMD's. FSR 3.1 is pinned like the generator: the learned one (FSR 4, Radeon RX
+    // 9000) could not be tried where this was written. GT5_FSR_UP_VERSION=auto lets AMD's DLL choose.
+    _snwprintf(path, MAX_PATH + 64, L"%ls\\amd_fidelityfx_upscaler_dx12.dll", where);
+    path[MAX_PATH + 63] = 0;
+    if (GetFileAttributesW(path) == INVALID_FILE_ATTRIBUTES)
+        snprintf(s_up_why, sizeof s_up_why, "AMD's FSR upscaler is not installed yet: run \"Get AMD FSR 3\" in the launcher again");
+    else if (!signed_by_amd(path))
+        snprintf(s_up_why, sizeof s_up_why, "amd_fidelityfx_upscaler_dx12.dll is not signed by AMD: run \"Get AMD FSR 3\" in the launcher again");
+    else
+        s_up_loaded = pick_version(device, FFX_API_CREATE_CONTEXT_DESC_TYPE_UPSCALE, "upscaler", "GT5_FSR_UP_VERSION", "3.1",
+                                   s_up_version, sizeof s_up_version, &s_up_version_id, &s_up_pinned, s_up_why, sizeof s_up_why);
+}
+
+int fsr_init(ID3D12Device* device, const wchar_t* dir, gt5_upscale_caps* caps)
+{
+    (void)dir;
+    memset(caps, 0, sizeof *caps);
+    snprintf(caps->name, sizeof caps->name, "AMD FSR");
+    s_error[0] = 0;
+    if (!device) {
+        snprintf(s_why, sizeof s_why, "no Direct3D 12 device");
+        snprintf(caps->message, sizeof caps->message, "%s", s_why);
+        return 0;
+    }
+    s_device = device;              // (again after a shutdown: AMD's DLLs stay loaded, the device may be new)
+    if (!s_started) { s_started = true; s_why[0] = 0; s_up_why[0] = 0; fsr_start(device); }
+    caps->available = s_up_loaded;
+    if (!s_up_loaded) snprintf(caps->message, sizeof caps->message, "%s", s_up_why);
     return 1;
 }
 
@@ -387,10 +439,150 @@ int fsr_fg_state(gt5_fg_state* st)
     return s_ctx != nullptr;
 }
 
+// ---- the upscaler ---------------------------------------------------------------------------------------
+// AMD's quality modes are the interface's, one for one: Native AA draws at the output's size (anti-aliasing
+// only), Quality / Balanced / Performance / Ultra Performance at 1/1.5, 1/1.7, 1/2 and 1/3 of it. The
+// renderer hands over what it hands DLSS: the 8-bit scene, a float depth copy (0 near .. 1 far), vectors
+// this frame -> the one before in pixels of the render size without the jitter, the jitter in render
+// pixels; and, from interface version 3, the camera's planes and field of view (FSR's disocclusion test
+// needs them; without them the defaults below).
+ffxCreateBackendDX12Desc s_ube;
+ffxCreateContextDescUpscaleVersion s_uver;
+ffxOverrideVersion s_uovr;
+ffxCreateContextDescUpscale s_ucd;
+ffxContext s_uctx;
+unsigned s_u_rw, s_u_rh, s_u_ow, s_u_oh;
+
+uint32_t ffx_quality(gt5_upscale_mode m)
+{
+    switch (m) {
+    case GT5_UPSCALE_QUALITY:           return FFX_UPSCALE_QUALITY_MODE_QUALITY;
+    case GT5_UPSCALE_BALANCED:          return FFX_UPSCALE_QUALITY_MODE_BALANCED;
+    case GT5_UPSCALE_PERFORMANCE:       return FFX_UPSCALE_QUALITY_MODE_PERFORMANCE;
+    case GT5_UPSCALE_ULTRA_PERFORMANCE: return FFX_UPSCALE_QUALITY_MODE_ULTRA_PERFORMANCE;
+    default:                            return FFX_UPSCALE_QUALITY_MODE_NATIVEAA;
+    }
+}
+
+// The render size: AMD's own query when it answers, else its documented ratios (1.0, 1.5, 1.7, 2.0, 3.0).
+int fsr_optimal(unsigned out_w, unsigned out_h, gt5_upscale_mode mode, unsigned* render_w, unsigned* render_h)
+{
+    if (!s_up_loaded || !out_w || !out_h || !render_w || !render_h) return 0;
+    uint32_t w = 0, h = 0;
+    if (s_uctx) {
+        ffxQueryDescUpscaleGetRenderResolutionFromQualityMode q = {};
+        q.header.type = FFX_API_QUERY_DESC_TYPE_UPSCALE_GETRENDERRESOLUTIONFROMQUALITYMODE;
+        q.displayWidth = out_w; q.displayHeight = out_h; q.qualityMode = ffx_quality(mode);
+        q.pOutRenderWidth = &w; q.pOutRenderHeight = &h;
+        if (fQuery(&s_uctx, &q.header) != FFX_API_RETURN_OK) w = h = 0;
+    }
+    if (!w || !h || w > out_w || h > out_h) {
+        const float r = mode == GT5_UPSCALE_QUALITY ? 1.5f : mode == GT5_UPSCALE_BALANCED ? 1.7f :
+                        mode == GT5_UPSCALE_PERFORMANCE ? 2.0f : mode == GT5_UPSCALE_ULTRA_PERFORMANCE ? 3.0f : 1.0f;
+        w = (uint32_t)((float)out_w / r); h = (uint32_t)((float)out_h / r);
+    }
+    *render_w = w ? w : 1u; *render_h = h ? h : 1u;
+    return 1;
+}
+
+void fsr_destroy()
+{
+    if (s_uctx && fDestroy) fDestroy(&s_uctx, nullptr);
+    s_uctx = nullptr;
+    s_u_rw = s_u_rh = s_u_ow = s_u_oh = 0;
+}
+
+int fsr_create(ID3D12GraphicsCommandList* list, unsigned render_w, unsigned render_h, unsigned out_w, unsigned out_h,
+               gt5_upscale_mode mode, unsigned flags, int preset)
+{
+    (void)list; (void)mode; (void)preset;          // one context serves every mode; AMD has no model variants
+    if (!s_up_loaded) { snprintf(s_error, sizeof s_error, "%s", s_up_why[0] ? s_up_why : "AMD FSR's upscaler is not available"); return 0; }
+    if (!render_w || !render_h || !out_w || !out_h || render_w > out_w || render_h > out_h) {
+        snprintf(s_error, sizeof s_error, "AMD FSR upscaling was asked for %ux%u to %ux%u", render_w, render_h, out_w, out_h);
+        return 0;
+    }
+    fsr_destroy();
+    memset(&s_ube, 0, sizeof s_ube); memset(&s_uver, 0, sizeof s_uver); memset(&s_uovr, 0, sizeof s_uovr); memset(&s_ucd, 0, sizeof s_ucd);
+    s_ube.header.type = FFX_API_CREATE_CONTEXT_DESC_TYPE_BACKEND_DX12; s_ube.device = s_device;
+    if (s_up_pinned) {
+        s_uovr.header.type = FFX_API_DESC_TYPE_OVERRIDE_VERSION; s_uovr.versionId = s_up_version_id;
+        s_ube.header.pNext = &s_uovr.header;
+    }
+    s_uver.header.type = FFX_API_CREATE_CONTEXT_DESC_TYPE_UPSCALE_VERSION; s_uver.version = FFX_UPSCALER_VERSION;
+    s_uver.header.pNext = &s_ube.header;
+    s_ucd.header.type = FFX_API_CREATE_CONTEXT_DESC_TYPE_UPSCALE; s_ucd.header.pNext = &s_uver.header;
+    // No exposure texture is handed over: AMD's own estimate. The game's picture is 8-bit, display-referred.
+    s_ucd.flags = FFX_UPSCALE_ENABLE_AUTO_EXPOSURE;
+    if (flags & GT5_UPSCALE_HDR) s_ucd.flags |= FFX_UPSCALE_ENABLE_HIGH_DYNAMIC_RANGE;
+    if (flags & GT5_UPSCALE_MV_OUTPUT_SIZE) s_ucd.flags |= FFX_UPSCALE_ENABLE_DISPLAY_RESOLUTION_MOTION_VECTORS;
+    if (flags & GT5_UPSCALE_MV_JITTERED) s_ucd.flags |= FFX_UPSCALE_ENABLE_MOTION_VECTORS_JITTER_CANCELLATION;
+    if (flags & GT5_UPSCALE_DEPTH_INVERTED) s_ucd.flags |= FFX_UPSCALE_ENABLE_DEPTH_INVERTED;
+    if (s_debug) { s_ucd.flags |= FFX_UPSCALE_ENABLE_DEBUG_CHECKING; s_ucd.fpMessage = ffx_message; }
+    s_ucd.maxRenderSize.width = render_w; s_ucd.maxRenderSize.height = render_h;
+    s_ucd.maxUpscaleSize.width = out_w; s_ucd.maxUpscaleSize.height = out_h;
+    s_uctx = nullptr;
+    const ffxReturnCode_t rc = fCreate(&s_uctx, &s_ucd.header, nullptr);
+    if (rc != FFX_API_RETURN_OK || !s_uctx) {
+        set_error("AMD FSR upscaling could not be made for these sizes", rc);
+        s_uctx = nullptr;
+        return 0;
+    }
+    {   // the upscaler really in use
+        ffxQueryGetProviderVersion pv = {};
+        pv.header.type = FFX_API_QUERY_DESC_TYPE_GET_PROVIDER_VERSION;
+        if (fQuery(&s_uctx, &pv.header) == FFX_API_RETURN_OK && pv.versionName) snprintf(s_up_version, sizeof s_up_version, "%s", pv.versionName);
+    }
+    s_u_rw = render_w; s_u_rh = render_h; s_u_ow = out_w; s_u_oh = out_h;
+    fprintf(stderr, "[fsr] upscaler %s made: up to %ux%u to %ux%u\n", s_up_version, render_w, render_h, out_w, out_h);
+    return 1;
+}
+
+int fsr_evaluate(const gt5_upscale_frame* fr)
+{
+    if (!s_uctx) { snprintf(s_error, sizeof s_error, "AMD FSR upscaling was not made"); return 0; }
+    if (!fr || !fr->list || !fr->color || !fr->depth || !fr->motion || !fr->output) {
+        snprintf(s_error, sizeof s_error, "AMD FSR was given a frame without a list, a picture, depth, vectors or an output texture");
+        return 0;
+    }
+    const unsigned rw = fr->render_w ? fr->render_w : s_u_rw, rh = fr->render_h ? fr->render_h : s_u_rh;
+    if (rw > s_u_rw || rh > s_u_rh) {
+        snprintf(s_error, sizeof s_error, "AMD FSR upscaling was made for up to %ux%u and is given %ux%u", s_u_rw, s_u_rh, rw, rh);
+        return 0;
+    }
+    const uint32_t in_state = FFX_API_RESOURCE_STATE_COMPUTE_READ;   // NON_PIXEL_SHADER_RESOURCE, as gt5_upscale.h says
+    ffxDispatchDescUpscale d = {};
+    d.header.type = FFX_API_DISPATCH_DESC_TYPE_UPSCALE;
+    d.commandList = fr->list;
+    d.color = res(fr->color, in_state);
+    d.depth = res(fr->depth, in_state);
+    d.motionVectors = res(fr->motion, in_state);
+    d.output = res(fr->output, FFX_API_RESOURCE_STATE_UNORDERED_ACCESS);
+    d.jitterOffset.x = fr->jitter_x; d.jitterOffset.y = fr->jitter_y;
+    d.motionVectorScale.x = fr->mv_scale_x == 0.0f ? 1.0f : fr->mv_scale_x;   // ours are pixels of the render size already
+    d.motionVectorScale.y = fr->mv_scale_y == 0.0f ? 1.0f : fr->mv_scale_y;
+    d.renderSize.width = rw; d.renderSize.height = rh;
+    d.upscaleSize.width = s_u_ow; d.upscaleSize.height = s_u_oh;
+    d.enableSharpening = false;
+    d.sharpness = 0.0f;
+    d.frameTimeDelta = fr->frame_ms > 0.0f ? fr->frame_ms : 16.7f;
+    d.preExposure = 1.0f;
+    d.reset = fr->reset != 0;
+    const bool cam = fr->cam_ok && fr->cam_near > 0.0f && fr->cam_far > fr->cam_near;
+    d.cameraNear = cam ? fr->cam_near : 0.1f;
+    d.cameraFar = cam ? fr->cam_far : 10000.0f;
+    d.cameraFovAngleVertical = cam && fr->cam_fov_y > 0.01f && fr->cam_fov_y < 3.0f ? fr->cam_fov_y : 0.9f;
+    d.viewSpaceToMetersFactor = 1.0f;
+    d.flags = 0;
+    const ffxReturnCode_t rc = fDispatch(&s_uctx, &d.header);
+    if (rc != FFX_API_RETURN_OK) { set_error("AMD FSR upscaling", rc); return 0; }
+    return 1;
+}
+
 void fsr_shutdown(ID3D12Device* device)
 {
     (void)device;
     fsr_fg_destroy();
+    fsr_destroy();
     // AMD's DLLs stay loaded: unloading them under a device that still lives is not worth the risk.
     s_device = nullptr;
 }
@@ -398,7 +590,7 @@ void fsr_shutdown(ID3D12Device* device)
 const char* fsr_last_error() { return s_error; }
 
 const gt5_upscale_api kApi = {
-    GT5_UPSCALE_API_VERSION, fsr_init, nullptr, nullptr, nullptr, nullptr, fsr_shutdown, fsr_last_error,
+    GT5_UPSCALE_API_VERSION, fsr_init, fsr_optimal, fsr_create, fsr_evaluate, fsr_destroy, fsr_shutdown, fsr_last_error,
     fsr_fg_caps, fsr_fg_create, fsr_fg_evaluate, fsr_fg_state, fsr_fg_destroy,
 };
 
