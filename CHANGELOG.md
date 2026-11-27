@@ -7,6 +7,16 @@ release on the tested rig in [STATUS.md](STATUS.md) unless a day says otherwise.
 > or repeated frames (fixed on 4 Nov and 9 Nov), so treat them as rough before-and-after comparisons.
 > From 9 Nov on, numbers are the game's own frames.
 
+## 27 Nov 2026
+
+🏷️ Released as **v0.1.120**
+
+🎮 **Triggers as throttle and brake now work on the game updates (2.00 and later)** (thanks StefMel, [#60](https://github.com/MormonFTP-hub/gt5-recomp/issues/60))
+- With **Triggers** set to *Throttle and brake* (in-game menu, Controls), a game updated to 2.xx kept the triggers on the gear shifts, as on a PS3 pad: the setting did nothing there, whatever the pad (StefMel's Xbox 360 and Xbox One pads on European 2.11).
+- GT5's updates added an eleventh wheel to the game's list of controllers, which moved the number the game gives a pad by one. The port looked for the 1.00 number, didn't recognise the pad and left the layout alone. It now reads those numbers from the game's own code, so each release gets its own (checked in the executables of Europe 1.00, 2.11 and 2.17 and Asia 1.00 and 2.01). On 1.00 nothing changes.
+- Checked on European 2.11 (with the Master Mod) here: the right trigger pulled all the way is 100 % throttle, half way 51 %, the left trigger 100 % brake. The US disc and real Xbox pads weren't tried here.
+- Not fixed yet, on every release: with *Throttle and brake* on, the triggers and bumpers also follow that layout at GT5's own menus, because the game keeps a demo race running behind them. *As on a PS3 pad* (the default) isn't affected.
+
 ## 26 Nov 2026
 
 🏷️ Released as **v0.1.119**

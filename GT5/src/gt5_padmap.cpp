@@ -8,7 +8,8 @@
 //     this+4   the button assignment in use (the game's Options > Controller settings edit it)
 //     mode     GT5's InputMode: 1 driving, 2 a replay, 3 the 0-400 m drag mode
 //     input+2  the controller's type: 1 + the pad type (7: the DUALSHOCK 3 / SIXAXIS the port reports),
-//              8 up a wheel, 0x12 up a pad and a wheel on one port (pad class = (type - 0x12) % 7 + 1)
+//              8 up a wheel, 0x12 up a pad and a wheel on one port (pad class = (type - 0x12) % 7 + 1);
+//              0x13 up on the 2.xx updates, which know one wheel more (pad_class, below)
 //     out      what the controls came to: +0 flags (2 throttle, 4 brake), +8 throttle and +0xA brake,
 //              each 0-4096
 // The game reads a controller for a car through it, each player's port every frame (mode 2 in a
@@ -495,16 +496,44 @@ bool parse(uint32_t cfg, uint32_t mode, uint32_t cls, Map* m)
 }
 
 // The pad class of a controller type, as InputPort's own code (0x52DC44) picks the assignment it reads:
-// 0 = no pad on this port. A type is 1 + the pad (1-7), 8 + the wheel (8-17), or 0x12 + 7 x wheel + pad
-// (a port with both; pad 0 = none, 6 = SIXAXIS). Every race updates player 2's port too, empty: type
-// 0x12, no pad and no wheel. 0x18 is our SIXAXIS with no wheel on it.
+// 0 = no pad on this port. A type is 1 + the pad (1-7), 8 + the wheel, or "both" + 7 x wheel + pad (a
+// port with both; pad 0 = none, 6 = SIXAXIS). Every race updates player 2's port too, empty: type "both",
+// no pad and no wheel. How many wheels there are moved "both": 1.00 knows 10 (8-17, both 0x12, our
+// SIXAXIS with no wheel 0x18), the 2.xx updates 11 (8-18, both 0x13, our SIXAXIS 0x19: #60, the triggers
+// stayed as on a PS3 pad there). So both numbers are read from that code of the game's (find_pad_types).
+uint32_t s_both = 0x12, s_both_max = 0x45;   // Europe 1.00's: type - both <= both_max
+
 uint32_t pad_class(uint32_t type)
 {
     uint32_t pad;
     if (type >= 1 && type <= 7) pad = type - 1;
-    else if (type >= 0x12 && type - 0x12 <= 0x45) pad = (type - 0x12) % 7;
+    else if (type >= s_both && type - s_both <= s_both_max) pad = (type - s_both) % 7;
     else return 0;
     return pad ? pad + 1 : 0;
+}
+
+// InputPort's pad class, in every release here (Europe 1.00 0x52DCD4, 2.11 0x48B81C):
+//     addi rT, rType, -both;  cmplwi cr7, rT, both_max;  bgt cr7, ...;  lis r0, 0x2492;  ori r0, r0, 0x4925
+// (the last two: the divide by 7). Every copy of it in an executable has the same numbers; they must
+// agree with each other (both = 8 + wheels, both_max = 7 x wheels - 1), else 1.00's are kept.
+void find_pad_types()
+{
+    for (uint32_t ea = find_word(0x3C002492u, kImageLo + 12); ea; ea = find_word(0x3C002492u, ea + 4)) {
+        if (rd32(ea + 4) != 0x60004925u) continue;
+        const uint32_t a = rd32(ea - 12), c = rd32(ea - 8), b = rd32(ea - 4);
+        if ((a >> 26) != 14 || !(a & 0x8000u)) continue;                        // addi rT, rX, -imm
+        if ((c & 0xFFE00000u) != 0x2B800000u || ((c >> 16) & 31) != ((a >> 21) & 31)) continue;   // cmplwi cr7, rT
+        if ((b & 0xFFFF0000u) != 0x419D0000u) continue;                         // bgt cr7
+        const uint32_t both = 0x10000u - (a & 0xFFFFu), max = c & 0xFFFFu;
+        if (both < 9 || both > 0x40 || (max + 1) % 7 || (max + 1) / 7 != both - 8) continue;
+        if (both != s_both || max != s_both_max)
+            fprintf(stderr, "[pad] this release knows %u wheels: a pad and a wheel on one port start at type 0x%X\n",
+                    both - 8, both);
+        s_both = both;
+        s_both_max = max;
+        return;
+    }
+    fprintf(stderr, "[pad] the game's controller types aren't where they're expected: Europe 1.00's are used\n");
 }
 
 // The game's ports as update() has shown them: each InputPort (one per player), its assignment and
@@ -702,6 +731,7 @@ void gt5_padmap_apply()
     }
     if (has_code(kAccelScale, 6)) s_accel_full = 64;
     if (has_code(kBrakeScale, 6)) s_brake_full = 83;
+    find_pad_types();
     s_opd = opd;
     ppu_register_function(opd, inputport_update);
     wr32(opd, opd);
