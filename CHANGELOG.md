@@ -9,6 +9,13 @@ release on the tested rig in [STATUS.md](STATUS.md) unless a day says otherwise.
 
 ## 27 Nov 2026
 
+🏷️ Released as **v0.1.122**
+
+🎮 **Throttle and brake on the triggers stays in races: GT5's menus get the PS3 pad's buttons again**
+- With **Triggers** set to *Throttle and brake*, GT5's own menus had that layout too: pulling the right trigger pressed ✕, the left □, and the bumpers pressed R2 / L2 instead of L1 / R1. It happened on every release, and had since the setting came in.
+- The cause: GT5 updates the player's race input every frame from the start, at its menus as well (its input service updates every controller it knows, always as "driving"), so the port took the menus for a race. The port now also watches the race view: the layout is on only while GT5 is drawing a race (a race, the 0-400 m mode, their pause and the screen before the start), and the menus are as on a PS3 pad. It is the same race camera the free camera (F6) uses, found by name, so it works on every release.
+- Checked here with *Throttle and brake* on: European disc, the menus stay as on a PS3 pad and in the race the right trigger is 100 % throttle and the left 100 % brake; European 2.11 with the Master Mod, the triggers pulled in GT Life's My Home no longer press anything. Replays weren't tried: GT5 reads the controller there in its replay mode, which now also counts as not driving. *As on a PS3 pad* (the default) is unchanged.
+
 🏷️ Released as **v0.1.121**
 
 ✨ **AMD FSR anti-aliasing, on any graphics card** (asked for by Arpadiam)

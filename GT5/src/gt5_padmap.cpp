@@ -75,6 +75,8 @@ extern "C" void cellPad_drive_frame(int play, unsigned accel, unsigned brake, un
                                     unsigned accel_full, unsigned brake_full, unsigned jobs);
 extern "C" unsigned long long cellPad_now_ms(void);
 extern "C" void cellPad_race_pause(int state);   // 1 paused, 0 running, -1 not known
+// gt5_freecam.cpp: ms since GT5 last asked for a race view, -1 not known
+extern "C" long long gt5_race_view_age_ms(void);
 
 // The lifted function table (generated/ppu_recomp_table.cpp): guest address -> lifted function.
 struct gt5_func_entry {
@@ -90,6 +92,8 @@ namespace {
 // Where the executable and its data sit in guest memory: every GT5 release fits well inside this.
 const uint32_t kImageLo = 0x00010000;
 const uint32_t kImageHi = 0x02000000;
+// [raceview] a race view asked for within this long: GT5 is drawing a race (it asks every frame, more than once)
+const long long kRaceViewMs = 1000;   // (a long frame mid-race mustn't drop the layout)
 
 // CELL_PAD_CTRL_* (cellPad.h)
 enum : uint16_t {
@@ -579,7 +583,26 @@ void note(uint32_t self, uint32_t mode, uint32_t input)
     static Map s_said;           // what the last "[pad] the game's buttons" line said
     static uint32_t s_said_port, s_bad_cfg, s_bad_mode, s_bad_type;
     static bool s_said_any;
-    const bool play = mode == 1 || mode == 3;
+    // [raceview] GT5 updates the player's race input every frame from boot on, in mode 1 at its menus too (its
+    // input service updates every registered GTInput::RaceInput, and RaceInput always says mode 1), so that alone
+    // made the menus count as driving: with Throttle and brake on, a trigger pressed Cross there and the bumpers
+    // R2 / L2 (#60). It counts only while a race view is drawn (gt5_freecam.cpp notes each time GT5 asks for one:
+    // races, replays, the 0-400 m mode, the screen before a start). Not known (no race camera found): as before.
+    // A replay draws the race view too; it reads the controller in GT5's replay mode (2) as well (its own caller:
+    // a race never shows one, PAD_DRIVE_DUMP's caller lines), so one of those in the last half second: not driving.
+    static int s_view_said = -1;
+    static volatile unsigned long long s_replay_ms;
+    if (mode == 2) s_replay_ms = cellPad_now_ms();
+    const long long view_age = gt5_race_view_age_ms();
+    const bool view_drawn = (view_age < 0 || view_age <= kRaceViewMs) &&
+                            !(s_replay_ms && cellPad_now_ms() - s_replay_ms < 500);
+    if ((mode == 1 || mode == 3) && (int)view_drawn != s_view_said) {
+        s_view_said = view_drawn;
+        if (view_age >= 0)
+            fprintf(stderr, "[pad] t=%llu %s\n", cellPad_now_ms(),
+                    view_drawn ? "a race view is drawn: the game is driving" : "no race view drawn (the menus) or a replay: not driving");
+    }
+    const bool play = (mode == 1 || mode == 3) && view_drawn;
     while (__atomic_test_and_set(&s_ports_lock, __ATOMIC_ACQUIRE)) {}
     const unsigned long long now = cellPad_now_ms();   // under the lock: never older than a seen_ms
     if (play) {
@@ -643,11 +666,27 @@ void note(uint32_t self, uint32_t mode, uint32_t input)
     cellPad_drive_frame(play ? 1 : 0, m.job[0], m.job[1], m.job[2], m.job[3], m.full[0], m.full[1], m.jobs);
 }
 
-// PAD_DRIVE_DUMP=1: once a second, from the player's port, what the pause is worked out from.
+// PAD_DRIVE_DUMP=1: once a second, from the player's port, what the pause is worked out from; and a line for
+// each new caller (EU 1.00: GTInput::RaceInput, vtable 0x17C7020, r31 of its update, called by the input
+// service at 0xBDD0C8, which updates every registered RaceInput each frame, menus included).
 int s_dump;
-void dump(uint32_t self, uint32_t mode, uint32_t input, uint32_t out, uint32_t lr)
+void dump_caller(uint32_t self, const ppu_context* ctx, unsigned long long now)
+{
+    static uint32_t seen_ri[16], seen_back[16];
+    static unsigned seen_n;
+    const uint32_t ri = (uint32_t)ctx->gpr[31], sp = (uint32_t)ctx->gpr[1];
+    const uint32_t back = guest_ok(sp + 0xA0, 8) ? rd32(sp + 0xA4) : 0;
+    for (unsigned i = 0; i < seen_n; i++) if (seen_ri[i] == ri && seen_back[i] == back) return;
+    if (seen_n >= 16) return;
+    seen_ri[seen_n] = ri; seen_back[seen_n] = back; seen_n++;
+    fprintf(stderr, "[pad-dump] t=%llu new caller: port %08X RaceInput %08X (vtable %08X) called from %08X\n", now, self, ri,
+            guest_ok(ri, 4) ? rd32(ri) : 0, back);
+}
+
+void dump(uint32_t self, uint32_t mode, uint32_t input, uint32_t out, uint32_t lr, const ppu_context* ctx)
 {
     static unsigned long long last;
+    dump_caller(self, ctx, cellPad_now_ms());
     if (self != s_player_self) return;
     const unsigned long long now = cellPad_now_ms();
     if (now < last + 1000) return;
@@ -691,7 +730,7 @@ void inputport_update(ppu_context* ctx)
     const uint32_t self = (uint32_t)ctx->gpr[3], mode = (uint32_t)ctx->gpr[4];
     const uint32_t input = (uint32_t)ctx->gpr[5], out = (uint32_t)ctx->gpr[6];
     note(self, mode, input);
-    if (s_dump) dump(self, mode, input, out, (uint32_t)ctx->lr);
+    if (s_dump) dump(self, mode, input, out, (uint32_t)ctx->lr, ctx);
     s_update(ctx);
     while (g_trampoline_fn) {
         void (*tf)(void*) = g_trampoline_fn;

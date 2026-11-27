@@ -6,6 +6,7 @@ the launcher's Updates page shows the newest one's notes.
 
 | Version | Date | What changed |
 |---|---|---|
+| [v0.1.122](https://github.com/MormonFTP-hub/gt5-recomp/releases/tag/v0.1.122) | 27 Nov 2026 | Throttle and brake on the triggers only while a race is drawn: GT5's menus keep the PS3 pad's buttons |
 | [v0.1.121](https://github.com/MormonFTP-hub/gt5-recomp/releases/tag/v0.1.121) | 27 Nov 2026 | AMD FSR anti-aliasing (Native AA, Quality, Balanced, Performance) on any graphics card with DirectX 12 |
 | [v0.1.120](https://github.com/MormonFTP-hub/gt5-recomp/releases/tag/v0.1.120) | 27 Nov 2026 | Triggers as throttle and brake work on the 2.xx game updates (#60) |
 | [v0.1.119](https://github.com/MormonFTP-hub/gt5-recomp/releases/tag/v0.1.119) | 26 Nov 2026 | Cockpit screens show their numbers instead of white boxes on DirectX 12; a Player name box in the launcher replaces User |

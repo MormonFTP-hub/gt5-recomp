@@ -233,6 +233,11 @@ std::atomic<int> s_state{OFF};
 double s_arm_t = 0.0;                   // when it was asked for
 uint32_t s_main = 0;                    // the adapter it draws for
 std::atomic<int64_t> s_main_seen_us{0}; // now_s() of its last view, in microseconds (read without the lock)
+// [raceview] now_s() of the last view any race view adapter was asked for, in microseconds (0 = none yet), for
+// gt5_race_view_age_ms: the controller's trigger layout (gt5_padmap.cpp) follows it. s_race_view_hook: the
+// wrappers are in from the start for it (PAD_RACE_VIEW=0: not, as before 27 Nov 2026).
+std::atomic<int64_t> s_race_view_us{0};
+bool s_race_view_hook;
 double s_px, s_py, s_pz;                // position, world metres
 double s_yaw, s_pitch, s_roll;          // radians
 double s_fov = 60.0, s_fov0 = 60.0;     // degrees, top to bottom; the game's when it started
@@ -489,6 +494,7 @@ void wrapper(ppu_context* ctx)
         g_trampoline_fn = nullptr;
         tf(ctx);
     }
+    if (SLOT == VIEW || SLOT == VIEW_OUT) s_race_view_us.store((int64_t)(now_s() * 1e6), std::memory_order_relaxed);
     const int state = s_state.load(std::memory_order_acquire);
     if (state == OFF && !s_probe) return;          // the game's own, untouched
     if (!guest_ok(out, 64)) return;
@@ -586,7 +592,11 @@ void freecam_loaded()
     s_found = true;
     const char* e = getenv("GT5_FREECAM_PROBE");
     s_probe = e && *e && *e != '0';
-    if (s_probe) wrap();
+    // [raceview] When the race view is drawn is what tells a race from GT5's menus for the controller's trigger
+    // layout (gt5_padmap.cpp): the wrappers go in now, and only note the time until the free camera is on.
+    e = getenv("PAD_RACE_VIEW");
+    s_race_view_hook = !(e && e[0] == '0');
+    if (s_probe || s_race_view_hook) wrap();
     fprintf(stderr, "[freecam] free camera ready (race camera 0x%08X: view 0x%08X, projection 0x%08X)%s\n", vt,
             s_code[VIEW], s_code[PROJ], s_probe ? "; probe on" : "");
 }
@@ -613,6 +623,18 @@ extern "C" int gt5_freecam_on(void)
         return 0;
     }
     return 1;
+}
+
+// [raceview] Milliseconds since GT5 last asked for a race view (a race, a replay, the 0-400 m mode, their pause
+// and the screen before a race start: everything drawn with the race camera); a large number when it hasn't
+// since the start; -1 when that isn't known (no race camera found, or PAD_RACE_VIEW=0). Any thread.
+extern "C" long long gt5_race_view_age_ms(void)
+{
+    if (!s_found || !s_race_view_hook) return -1;
+    const int64_t t = s_race_view_us.load(std::memory_order_relaxed);
+    if (!t) return 1LL << 40;
+    const long long ms = (long long)((now_s() * 1e6 - (double)t) / 1000.0);
+    return ms < 0 ? 0 : ms;
 }
 
 // Switch on or off. Returns 1 on, 0 off, -1 there is no free camera in this executable.

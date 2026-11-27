@@ -134,6 +134,7 @@ performance matters more than the graphics card.
 
 The last few days; the full history since 1 November is in [CHANGELOG.md](CHANGELOG.md).
 
+- **27 Nov 2026 (evening):** with *Throttle and brake* on, GT5's menus keep the PS3 pad's buttons (the triggers no longer press ✕ / □ there); the layout follows the race view (v0.1.122).
 - **27 Nov 2026 (later):** **AMD FSR anti-aliasing** on any graphics card with DirectX 12: *FSR: Native AA* and the Quality / Balanced / Performance upscaling modes, next to DLSS (v0.1.121; tried on an NVIDIA card only).
 - **27 Nov 2026:** *Throttle and brake* on the triggers works on the 2.xx game updates too (they number pads one higher than 1.00; the port now reads the numbers from the game) (v0.1.120; #60).
 - **26 Nov 2026 (later):** cockpit screens show their numbers instead of white boxes on DirectX 12 (a texture format the renderer had no case for; seen on the McLaren MP4-12C here, Ferrari 599 and Enzo in a player's pictures), and a **Player name** box on the launcher's Game page replaces "User" in GT Life and races (v0.1.119).
