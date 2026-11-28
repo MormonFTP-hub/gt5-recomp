@@ -9,6 +9,12 @@ release on the tested rig in [STATUS.md](STATUS.md) unless a day says otherwise.
 
 ## 28 Nov 2026
 
+🏷️ Released as **v0.1.126**
+
+🛠️ **Installing on Japanese (and Korean) Windows no longer stops at "Converting the game"** (thanks JIMARO19720710, [#66](https://github.com/MormonFTP-hub/gt5-recomp/issues/66))
+- Step 6/7 stopped with `UnicodeEncodeError: 'cp932' codec can't encode character '—'`, twice, and setup gave up. Python writes the converted code in Windows' own code page, and the code's comments have an em dash (—), which the Japanese code page (932) and Python's Korean one (949) don't have.
+- On such a PC the conversion now writes UTF-8 instead (it checks which code page Python uses). Every other PC keeps writing as before, so the files it already has stay the same and nothing is converted or built again. Checked here: a full conversion in UTF-8 mode finishes (77,940 functions); not tried on a Japanese Windows.
+
 🏷️ Released as **v0.1.125**
 
 🖥️ **Ultrawide screens get the whole screen again** (thanks TacticalTurtleneck, [#61](https://github.com/MormonFTP-hub/gt5-recomp/issues/61))

@@ -29,6 +29,18 @@ if ($missing) {
 }
 New-Item -ItemType Directory -Force "analysis" | Out-Null
 
+# (#66) Python writes the generated code in Windows' own code page. Japanese Windows' (932) has no em dash, which
+# the code's comments have, and the lift stopped there (UnicodeEncodeError). Where the code page can't hold it,
+# Python writes and reads UTF-8 (PYTHONUTF8) - no lift could have finished there before. Every other PC keeps its
+# code page, so the files it already has read back as before (UTF-8 would trip over their em dash).
+if (-not $env:PYTHONUTF8) {
+    $noDash = & $py -c "import locale; print(1 if chr(0x2014).encode(locale.getpreferredencoding(False), 'replace') == b'?' else 0)" 2>$null
+    if ("$noDash".Trim() -eq "1") {
+        $env:PYTHONUTF8 = "1"
+        Write-Output "(Windows' code page here has no em dash: Python writes the generated code as UTF-8)"
+    }
+}
+
 # The addresses that differ between GT5 releases (code end, setjmp/longjmp, a computed goto),
 # found in this copy's EBOOT by version_addrs.py. Europe 01.00: 0x111c684, 00D00D74/00D00E98.
 Write-Output "== version_addrs"
