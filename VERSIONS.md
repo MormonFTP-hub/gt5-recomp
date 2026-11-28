@@ -6,6 +6,7 @@ the launcher's Updates page shows the newest one's notes.
 
 | Version | Date | What changed |
 |---|---|---|
+| [v0.1.125](https://github.com/MormonFTP-hub/gt5-recomp/releases/tag/v0.1.125) | 28 Nov 2026 | Ultrawide screens get the whole screen again (#61); the Xbox button can open the in-game menu |
 | [v0.1.124](https://github.com/MormonFTP-hub/gt5-recomp/releases/tag/v0.1.124) | 27 Nov 2026 | Switching anti-aliasing while playing (DLAA, FSR Native AA, SMAA) now switches the method |
 | [v0.1.123](https://github.com/MormonFTP-hub/gt5-recomp/releases/tag/v0.1.123) | 27 Nov 2026 | SMAA anti-aliasing built into the game, on any graphics card with DirectX 12 |
 | [v0.1.122](https://github.com/MormonFTP-hub/gt5-recomp/releases/tag/v0.1.122) | 27 Nov 2026 | Throttle and brake on the triggers only while a race is drawn: GT5's menus keep the PS3 pad's buttons |

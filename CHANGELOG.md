@@ -7,6 +7,20 @@ release on the tested rig in [STATUS.md](STATUS.md) unless a day says otherwise.
 > or repeated frames (fixed on 4 Nov and 9 Nov), so treat them as rough before-and-after comparisons.
 > From 9 Nov on, numbers are the game's own frames.
 
+## 28 Nov 2026
+
+🏷️ Released as **v0.1.125**
+
+🖥️ **Ultrawide screens get the whole screen again** (thanks TacticalTurtleneck, [#61](https://github.com/MormonFTP-hub/gt5-recomp/issues/61))
+- On a 21:9 monitor with **Screen shape** *21:9* or *Auto*, the race and menus showed the wider view but squeezed into a 16:9 box in the middle of the screen, with black bars at the sides: everything looked narrow and tall.
+- In 1080p mode (the default) GT5 draws its wider view into the same 1920x1080 picture, squeezed, and the step to the screen widens it again. That step had learnt to keep "the picture's own shape" (so a 4:3 or 16:10 screen gets bars instead of a stretched picture), and it took that shape from the picture's pixels, 16:9. It now takes the shape GT5 was told to draw for. Both renderers (DirectX 12 and Vulkan). The same applied to screens wider than 21:9 in 720p mode.
+- Checked here in a 2560x1080 window: the race fills it, with the HUD and the gauges in their right shape.
+
+🎮 **The Xbox button can open the in-game menu** (asked for by Keduboneur78)
+- In-game menu (F1) > Controls > **Menu buttons on a controller** has a new choice, **Xbox button (PS button)**: one press opens or closes the menu, instead of holding Select + Start. The game never sees that button, so nothing else changes. The default stays Select + Start.
+- Windows' Game Bar opens on the same button unless it's switched off (Windows Settings > Gaming > Game Bar). A DualSense or DualShock 4 read directly uses its PS button.
+- The button is read with the same hidden Windows call SDL uses (Windows' standard one leaves the Xbox button out). Not tried with a real Xbox pad here.
+
 ## 27 Nov 2026
 
 🏷️ Released as **v0.1.124**

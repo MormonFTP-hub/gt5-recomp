@@ -79,6 +79,7 @@ struct State {
     unsigned gen = ~0u;
     int menu_vk = VK_F1;
     unsigned short chord_mask = 0;
+    bool guide_mode = false, guide_prev = false;   // [guide] GT5_MENU_PAD=guide: the Xbox / PS button
     bool osd = false;
     float user_scale = 1.0f;
     // window mode
@@ -155,8 +156,9 @@ void refresh_settings()
         if (s.freecam_vk == s.menu_vk || s.freecam_vk == VK_F11 || s.freecam_vk == VK_ESCAPE) { s.freecam_vk = 0; s.freecam_key[0] = 0; }
     }
     gt5_setting_str("GT5_MENU_PAD", b, sizeof b);
-    s.chord_mask = !_stricmp(b, "off") ? 0 : !_stricmp(b, "l3r3") ? (unsigned short)((1 << 1) | (1 << 2))
-                                                                : (unsigned short)((1 << 0) | (1 << 3));
+    s.guide_mode = !_stricmp(b, "guide");
+    s.chord_mask = !_stricmp(b, "off") || s.guide_mode ? 0 : !_stricmp(b, "l3r3") ? (unsigned short)((1 << 1) | (1 << 2))
+                                                                                : (unsigned short)((1 << 0) | (1 << 3));
     s.osd = gt5_setting_bool("GT5_OSD", 0) != 0;
     s.notices_allowed = gt5_setting_bool("GT5_NOTICES", 1) != 0;
     // Menu size: Normal is no value at all. The first menu had an "Automatic" (no value) next to a
@@ -1155,6 +1157,11 @@ extern "C" void gt5_menu_feed_pad(const gt5_menu_pad* pad)
         if (!ui.open) { s.release_until = now + 100; InterlockedExchange(&s.release_wait, 1); }
     }
     if (s.release_wait && !down && pad->buttons == 0 && now >= s.release_until && (keys_up() || now >= s.release_until + 1500)) InterlockedExchange(&s.release_wait, 0);
+    // [guide] GT5_MENU_PAD=guide: one press of the Xbox button (a PlayStation pad's PS button) opens or closes the
+    // menu. The game never sees that button, so nothing needs shutting out.
+    const bool guide = s.inited && s.guide_mode && pad->connected && pad->guide;
+    if (guide && !s.guide_prev) InterlockedExchange(&s.toggle_req, 1);
+    s.guide_prev = guide;
     ReleaseSRWLockExclusive(&s.feed_lock);
     // [freecam] the controller flies it (sticks, triggers, L1 / R1 slower / faster, the d-pad zooms, R3 puts
     // the zoom back), but not while the menu has it or the menu's button pair is being held

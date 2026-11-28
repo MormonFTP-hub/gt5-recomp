@@ -108,8 +108,10 @@ launcher: every setting in one window, then **Play**. No more editing `play.bat`
   your disc has it), the volume and muting in the background, your mods from `GT5\mods`, the launcher's
   own language (English or 中文).
 
-The game's own settings menu (**F1** in the game, or **Select + Start** held on a controller) has the same
-settings and writes the same file; the launcher reads it again when the game ends.
+The game's own settings menu (**F1** in the game, or **Select + Start** held on a controller; Controls >
+*Menu buttons on a controller* can make it L3 + R3 or the **Xbox button**) has the same settings and writes
+the same file; the launcher reads it again when the game ends. (Windows' Game Bar also opens on the Xbox
+button unless that is switched off in Windows' Game Bar settings.)
 - **Updates:** shows your version and the newest one with what's new, and **Update now** does the
   whole update for you in its own window (your newest Photo Mode pictures behind it, a car on the
   progress bar, **Details** for the full text) and opens the launcher again.

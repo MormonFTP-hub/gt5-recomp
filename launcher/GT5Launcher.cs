@@ -3310,7 +3310,7 @@ namespace Gt5Launcher
             k = k == "" ? "F1" : KeyBinds.Pretty(KeyBinds.Canon(k) ?? k);
             string pad = S.Get("GT5_MENU_PAD").Trim().ToLowerInvariant();
             if (pad == "off") return k;
-            return k + " (" + (pad == "l3r3" ? "L3 + R3" : "Select + Start") + ")";
+            return k + " (" + (pad == "l3r3" ? "L3 + R3" : pad == "guide" ? "Xbox button" : "Select + Start") + ")";
         }
 
         // What the game will start with, as it reads the settings.

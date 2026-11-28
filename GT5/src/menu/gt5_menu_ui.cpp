@@ -1442,7 +1442,8 @@ void ui_build_hint(float alpha)
     key_names(key, name, sizeof name);
     char pad_mode[16];
     gt5_setting_stored("GT5_MENU_PAD", pad_mode, sizeof pad_mode);
-    const char* chord = !_stricmp(pad_mode, "off") ? nullptr : !_stricmp(pad_mode, "l3r3") ? "L3+R3" : "Select+Start";
+    const char* chord = !_stricmp(pad_mode, "off") ? nullptr : !_stricmp(pad_mode, "l3r3") ? "L3+R3" :
+                        !_stricmp(pad_mode, "guide") ? T("Xbox button", "Xbox 键") : "Select+Start";
     if (chord && pad_connected()) snprintf(text, sizeof text, T("%s / %s: settings", "%s / %s：设置"), name, chord);
     else snprintf(text, sizeof text, T("%s: settings", "%s：设置"), name);
     ImGui::PushFont(nullptr, base_px());

@@ -134,6 +134,7 @@ performance matters more than the graphics card.
 
 The last few days; the full history since 1 November is in [CHANGELOG.md](CHANGELOG.md).
 
+- **28 Nov 2026:** ultrawide screens get the whole screen again in 1080p mode (it was a squeezed 16:9 box; #61), both renderers; the Xbox button (or a PS button) can open the in-game menu (Controls > Menu buttons on a controller) (v0.1.125).
 - **27 Nov 2026 (late night):** switching anti-aliasing in the F1 menu between DLAA, FSR Native AA and SMAA now switches the method (it kept the first one; DLAA to SMAA left none) (v0.1.124).
 - **27 Nov 2026 (night):** **SMAA anti-aliasing** built into the game, on any graphics card with DirectX 12: no add-on, no blur in motion, 0.16 ms at 2304x1296 on the tested rig (v0.1.123; tried on an NVIDIA card only).
 - **27 Nov 2026 (evening):** with *Throttle and brake* on, GT5's menus keep the PS3 pad's buttons (the triggers no longer press ✕ / □ there); the layout follows the race view (v0.1.122).
