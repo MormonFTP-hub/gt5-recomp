@@ -9,6 +9,13 @@ release on the tested rig in [STATUS.md](STATUS.md) unless a day says otherwise.
 
 ## 28 Nov 2026
 
+🏷️ Released as **v0.1.127**
+
+🛠️ **DLSS, DLAA and FSR keep more of the road's detail in motion** (thanks cilliersprins-afk, How3010 and Arpadiam: [#64](https://github.com/MormonFTP-hub/gt5-recomp/issues/64), [#62](https://github.com/MormonFTP-hub/gt5-recomp/issues/62))
+- With the temporal anti-aliasing modes the asphalt's grain turned into a smooth smear that grows with speed (the "pixel river"). A day of measuring showed what the port hands the upscalers is right: the motion vectors match the real motion to about a hundredth of a pixel, the camera jitter's direction and size are right, and the depth lines up with the picture.
+- What was missing: textures are now picked one step sharper in these modes (a texture LOD bias of -1, the rule AMD and NVIDIA give for their upscalers). DLAA and FSR Native AA had no bias at all, DLSS Quality and below only the size difference. The upscaler resolves the finer texture from its shifted frames: about 10 % more fine detail on the road with DLAA here. SMAA and Off are unchanged.
+- The bigger difference is NVIDIA's model: **DLSS model K** (in-game menu F1 > Display) kept about 30 % more of the road's detail than the default model in the same test, 45 % with the new bias. The temporal modes still soften fast-moving texture at 1080p, as these upscalers do; a higher Resolution helps, and SMAA keeps the game's own sharp picture.
+
 🏷️ Released as **v0.1.126**
 
 🛠️ **Installing on Japanese (and Korean) Windows no longer stops at "Converting the game"** (thanks JIMARO19720710, [#66](https://github.com/MormonFTP-hub/gt5-recomp/issues/66))

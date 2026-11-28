@@ -6,6 +6,7 @@ the launcher's Updates page shows the newest one's notes.
 
 | Version | Date | What changed |
 |---|---|---|
+| [v0.1.127](https://github.com/MormonFTP-hub/gt5-recomp/releases/tag/v0.1.127) | 28 Nov 2026 | DLSS / DLAA / FSR: texture LOD bias one step sharper (log2(render/output) - 1) |
 | [v0.1.126](https://github.com/MormonFTP-hub/gt5-recomp/releases/tag/v0.1.126) | 28 Nov 2026 | Installing on Japanese and Korean Windows: the code conversion writes UTF-8 there (#66) |
 | [v0.1.125](https://github.com/MormonFTP-hub/gt5-recomp/releases/tag/v0.1.125) | 28 Nov 2026 | Ultrawide screens get the whole screen again (#61); the Xbox button can open the in-game menu |
 | [v0.1.124](https://github.com/MormonFTP-hub/gt5-recomp/releases/tag/v0.1.124) | 27 Nov 2026 | Switching anti-aliasing while playing (DLAA, FSR Native AA, SMAA) now switches the method |
