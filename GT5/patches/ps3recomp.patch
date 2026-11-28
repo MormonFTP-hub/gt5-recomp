@@ -73465,7 +73465,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
  
      b.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_SOURCE;
      b.Transition.StateAfter = D3D12_RESOURCE_STATE_RENDER_TARGET;
-@@ -9024,6 +19687,2530 @@
+@@ -9024,6 +19687,2533 @@
      rb->lpVtbl->Release(rb);
      return nonblack;
  }
@@ -75672,8 +75672,11 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
 +        if (g.surfaces[i].tex && ld_scn_sig_is(q, &g.surfaces[i])) { s_scn.sig_rs = g.surfaces[i].rs; break; }
 +    const u32 rw = ld_hs(q->cw, s_scn.sig_rs), rh = ld_hs(q->ch, s_scn.sig_rs);
 +    if (LD_UP_SMAA()) { ow = rw; oh = rh; }      /* [smaa] the picture as large as it is drawn */
++    /* [smaa] the back end too: DLAA, FSR Native AA and SMAA are all mode 1 at the same sizes, and a switch
++     * between them while playing kept the one made first (DLAA -> SMAA left no anti-aliasing at all) */
 +    if (!s_up.made || !s_up.out || s_up.rw != rw || s_up.rh != rh || s_up.ow != ow || s_up.oh != oh ||
-+        s_up.made_mode != s_up.want || s_up.made_preset != s_up.preset || s_up.made_quality != quality) {
++        s_up.made_mode != s_up.want || s_up.made_preset != s_up.preset || s_up.made_quality != quality ||
++        s_up.made_vendor != s_up.vendor) {
 +        if (!ld_up_make(rw, rh, ow, oh, quality)) return;
 +    }
 +    s_up.ready = 1;
@@ -75996,7 +75999,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
  
  #if !defined(YZ_PERF_CLEAN)
  static void ld_parity_capture_surface(
-@@ -9199,9 +22386,425 @@
+@@ -9199,9 +22389,425 @@
      fflush(stderr);
  }
  
@@ -76423,7 +76426,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
  
      /* LD_SURF_DUMP=<dir>: dump EVERY live surface once, with its non-black
       * count, at LD_SURF_DUMP_FRAME (default 1200).
-@@ -9243,6 +22846,71 @@
+@@ -9243,6 +22849,71 @@
                        g.surfaces[i].last_clear_generation);
            }
        } }
@@ -76495,7 +76498,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
      /* LD_FRAME_DUMP=<dir> [+ LD_FRAME_DUMP_EVERY=<n>, default 300]: write the
       * PRESENTED surface to a .ppm every n flips. The engine could already dump
       * a surface, but only at shutdown or behind the parity harness -- neither
-@@ -9262,20 +22930,38 @@
+@@ -9262,20 +22933,38 @@
       * late scene, e.g. frames for a GIF, without thousands of early files). */
      static long dump_from = -1;
      if (dump_from < 0) { const char* e = getenv("LD_FRAME_DUMP_FROM"); dump_from = e ? atol(e) : 0; }
@@ -76539,7 +76542,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
          }
      }
      if (target == LD_INVALID_SURFACE && buffer_id < 8 &&
-@@ -9296,10 +22982,28 @@
+@@ -9296,10 +22985,28 @@
          return;
      }
      g_ld_last_present_target = target;
@@ -76568,7 +76571,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
          fprintf(stderr, "[frame-dump] %s %ux%u nonblack=%llu\n", path,
                  g.surfaces[target].w, g.surfaces[target].h,
                  (unsigned long long)(nb == UINT64_MAX ? 0 : nb));
-@@ -9334,6 +23038,10 @@
+@@ -9334,6 +23041,10 @@
        } }
      const u32 current = current_surface();
      surface_t* presented_surface = &g.surfaces[target];
@@ -76579,7 +76582,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
      /* LD_PRESENT_DBG=1: is this surface actually finished? A surface whose last
       * clear is NEWER than its last draw has been wiped and not redrawn -- that
       * presents as a black frame. Counting them separates "we present the wrong
-@@ -9399,10 +23107,158 @@
+@@ -9399,10 +23110,158 @@
            ld_trace_target("present", target, buffer_id);
            last_present_target = target;
        } }
@@ -76738,7 +76741,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
      D3D12_RESOURCE_BARRIER bar[2] = {0};
      bar[0].Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
      bar[0].Transition.pResource = srcimg;
-@@ -9416,17 +23272,47 @@
+@@ -9416,17 +23275,47 @@
      bar[1].Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_DEST;
      g.list->lpVtbl->ResourceBarrier(g.list, 2, bar);
  
@@ -76790,7 +76793,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
          if (SUCCEEDED(present_hr))
              ld_present_measure_record(g_ld_frames + 1u);
          else {
-@@ -9475,6 +23361,7 @@
+@@ -9475,6 +23364,7 @@
        g_ld_last_frame_draws = (u32)(g_ld_stats.packets_seen - packets_at_last_frame);
        packets_at_last_frame = g_ld_stats.packets_seen; }
      g_ld_frames++;
@@ -76798,7 +76801,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
  #if defined(YZ_PERF_PROFILE)
      ld_profile_present(g_ld_frames);
  #endif
-@@ -10153,6 +24040,30 @@
+@@ -10153,6 +24043,30 @@
                    } }
                  (void)hi; (void)rbase;
              } }
@@ -76829,7 +76832,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
            fprintf(stderr, "[fps] %.1f (frames %u..%u over %.1fs)\n",
                    (g_ld_frames - fps_f0) * 1000.0 / (double)(now - fps_t0),
                    fps_f0, g_ld_frames, (now - fps_t0) / 1000.0);
-@@ -10275,9 +24186,11 @@
+@@ -10275,9 +24189,11 @@
      }
  #endif
  
@@ -76844,7 +76847,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
  #if !defined(YZ_PERF_CLEAN)
      g_ld_frame_vertex_constant_ring_recycles = 0;
  #endif
-@@ -10297,6 +24210,7 @@
+@@ -10297,6 +24213,7 @@
      /* let the GPU drain, then release. (Best-effort; process teardown also
       * reclaims.) */
      ld_flush(LD_FLUSH_SHUTDOWN);
@@ -76852,7 +76855,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
  #if defined(YZ_PERF_PROFILE)
      fprintf(stderr,
              "[rsx-perf-summary] frames=%u "
-@@ -10498,7 +24412,10 @@
+@@ -10498,7 +24415,10 @@
                  (unsigned long long)g_ld_shader_disk_writes[1],
                  (unsigned long long)g_ld_shader_disk_rejects);
      }
@@ -76864,7 +76867,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
      shader_blob_cache_release(&g.vs_blobs);
      shader_blob_cache_release(&g.ps_blobs);
      for (u32 i = 0; i < g.n_textures; i++) if (g.textures[i].tex) g.textures[i].tex->lpVtbl->Release(g.textures[i].tex);
-@@ -10516,10 +24433,24 @@
+@@ -10516,10 +24436,24 @@
      if (g.movie_overlay_rgba) free(g.movie_overlay_rgba);
      if (g.movie_overlay_mask) free(g.movie_overlay_mask);
      if (g.white_tex) g.white_tex->lpVtbl->Release(g.white_tex);
@@ -76889,7 +76892,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
      for (u32 i = 0; i < 4; i++)
          if (g.downsample_pso[i]) g.downsample_pso[i]->lpVtbl->Release(g.downsample_pso[i]);
      if (g.downsample_rootsig)
-@@ -10527,6 +24458,13 @@
+@@ -10527,6 +24461,13 @@
      if (g.depth_snapshot_rootsig)
          g.depth_snapshot_rootsig->lpVtbl->Release(
              g.depth_snapshot_rootsig);
@@ -76903,7 +76906,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
      if (g.rootsig_x) g.rootsig_x->lpVtbl->Release(g.rootsig_x);
      if (g.swap) g.swap->lpVtbl->Release(g.swap);
      if (g_ld_info_queue) {
-@@ -10541,6 +24479,7 @@
+@@ -10541,6 +24482,7 @@
  #endif
      if (g.dev) g.dev->lpVtbl->Release(g.dev);
      memset(&g, 0, sizeof(g));
@@ -76911,7 +76914,7 @@ diff --git a/libs/video/rsx_live_draw.c b/libs/video/rsx_live_draw.c
      if (dc.verts) { free(dc.verts); dc.verts = NULL; dc.cap_verts = 0; }
      if (dc.refs) { free(dc.refs); dc.refs = NULL; dc.cap_refs = 0; }
      if (dc.compact_verts) {
-@@ -10552,3 +24491,38 @@
+@@ -10552,3 +24494,38 @@
  }
  
  #endif /* _WIN32 */

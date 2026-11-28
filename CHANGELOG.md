@@ -9,6 +9,12 @@ release on the tested rig in [STATUS.md](STATUS.md) unless a day says otherwise.
 
 ## 27 Nov 2026
 
+🏷️ Released as **v0.1.124**
+
+🛠️ **Switching anti-aliasing while playing now really switches** (thanks Keduboneur78)
+- Changing **Anti-aliasing** between **DLAA**, **FSR: Native AA** and **SMAA** in the in-game menu (F1) kept the one that was running before: all three work at the picture's own size, and the port only rebuilt the anti-aliasing when the size or the mode's number changed, not when the method did. Going from DLAA to SMAA left no anti-aliasing at all (DLAA waited for motion data that SMAA turns off, then gave up); going from SMAA to DLAA kept SMAA on a jittering picture. Since v0.1.121 (DLAA and FSR). Choosing in the launcher before starting the game was not affected.
+- Now a change of method rebuilds it at once. Checked here in a race, switching between SMAA and DLAA every 15 seconds: each switch made the chosen one, at 54 to 60 fps either way.
+
 🏷️ Released as **v0.1.123**
 
 ✨ **SMAA anti-aliasing, built into the game, on any graphics card** (asked for by Arpadiam)

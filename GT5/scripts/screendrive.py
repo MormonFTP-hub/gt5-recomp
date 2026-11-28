@@ -173,8 +173,9 @@ def drive(a):
             last_keep = now
             img.save(os.path.join(a.dir, "frame_t%05d.png" % (now - t0)))
         cw = a.content_width
-        if img.size == (1920, 1080):
-            # 1080p mode (PS3_VIDEO_MODE=1080): the whole picture, at any shape, fills the 1920x1080.
+        if img.size != (1280, 720) and img.size[0] > 1280 and abs(img.size[0] * 9 - img.size[1] * 16) <= 16:
+            # 1080p mode (PS3_VIDEO_MODE=1080): the whole picture, at any shape, fills the 1920x1080; a render
+            # resolution above it (LD_RES_TARGET, e.g. 5120x2880 at 5K) dumps larger, the same picture.
             img = img.resize((1280, 720), Image.BILINEAR)
             cw = cw or 1280
         img = unsqueeze(img, a.widen, cw)
